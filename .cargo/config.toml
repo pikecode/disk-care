@@ -1,0 +1,6 @@
+# 使用系统链接器，避免 Node.js 同名 cc 命令遮蔽编译器。
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/clang"
+
+[target.x86_64-apple-darwin]
+linker = "/usr/bin/clang"
