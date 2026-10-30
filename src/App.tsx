@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { version as appVersion } from "../package.json";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowDownRight,
@@ -6,7 +7,6 @@ import {
   ArrowUpRight,
   Check,
   ChevronRight,
-  CircleCheck,
   CircleHelp,
   Clock3,
   Database,
@@ -27,11 +27,17 @@ import {
   X,
 } from "lucide-react";
 import { api, desktop } from "./api";
-import CleanupOutcome, { SpaceChange } from "./CleanupOutcome";
+import CleanupOutcome, { CleanupResult, SpaceChange } from "./CleanupOutcome";
 import CleanupEvidence from "./CleanupEvidence";
 import ScanCoverage from "./ScanCoverage";
 import ScanAccess from "./ScanAccess";
+import ScanTiming, { ScanWait } from "./ScanTiming";
 import ProjectLedger from "./ProjectLedger";
+import AiData from "./AiData";
+import AppResidue from "./AppResidue";
+import type { ResidueReport } from "./types";
+import ObservationOverview from "./ObservationOverview";
+import DirectoryInsights from "./DirectoryInsights";
 import CleanupAnalysis from "./CleanupAnalysis";
 import {
   analyzeCleanup,
@@ -40,8 +46,11 @@ import {
 } from "./cleanupEligibility";
 import type { CleanupFilter } from "./cleanupEligibility";
 import type {
+  AiReport,
+  AiRoot,
   Disk,
   Item,
+  Listing,
   Plan,
   Progress,
   ProjectReport,
@@ -130,16 +139,19 @@ const previewItems: Item[] = [
 ];
 
 export default function App() {
-  const [view, setView] = useState<"overview" | "projects" | "history">(
+  const [view, setView] = useState<"overview" | "projects" | "ai" | "residue" | "history">(
     "overview",
   );
   const [scanRequest, setScanRequest] = useState<{
     root: string | null;
   } | null>(null);
+  const [residueReport, setResidueReport] = useState<ResidueReport | null>(null);
+  const [aiBaselines, setAiBaselines] = useState<AiReport[]>([]);
+  const [aiReports, setAiReports] = useState<AiReport[] | null>(null);
   const [disk, setDisk] = useState<Disk | null>(null);
   const [scan, setScan] = useState<Scan | null>(null);
   const [status, setStatus] = useState<
-    "idle" | "scan" | "projects" | "prepare" | "clean" | "protect"
+    "idle" | "scan" | "projects" | "ai" | "residue" | "prepare" | "clean" | "protect"
   >("idle");
   const [projectReport, setProjectReport] = useState<ProjectReport | null>(
     null,
@@ -154,16 +166,11 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [history, setHistory] = useState<CleanRecord[]>([]);
   const [result, setResult] = useState<CleanRecord | null>(null);
-  const [browse, setBrowse] = useState<{
+  const [browse, setBrowse] = useState<(Omit<Listing, "items"> & {
     item: Item;
     relative: string;
     children: Item[];
-    nextOffset: number | null;
-    total: number;
-    measuredAt: number;
-    complete: boolean;
-    issues: number;
-  } | null>(null);
+  }) | null>(null);
   const browseRequest = useRef(0);
   const [browseProgress, setBrowseProgress] = useState<Progress | null>(null);
   const [browsing, setBrowsing] = useState(false);
@@ -251,10 +258,17 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", close);
   }, [status]);
 
+  async function inspectResidue() {
+    if (!desktop || busy || browsing) return;
+    setStatus("residue"); setError(""); setResidueReport(null);
+    try { setResidueReport(await api.inspectResidue()); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setStatus("idle"); }
+  }
   function startScan() {
     if (desktop && !busy && !browsing) setScanRequest({ root: null });
   }
-  async function runScan(extended: boolean) {
+  async function runScan(extended: boolean, rootIds?: string[]) {
     if (!desktop || busy) return;
     setStatus("scan");
     setNotice("");
@@ -265,7 +279,7 @@ export default function App() {
     setProgress(null);
     setScan(null);
     try {
-      const next = await api.scan(extended);
+      const next = await api.scan(extended, rootIds);
       setScan(next);
       setDisk(next.disk);
     } catch (e) {
@@ -289,6 +303,15 @@ export default function App() {
       setStatus("idle");
       setProgress(null);
     }
+  }
+  async function analyzeAi(roots: AiRoot[]) {
+    if (!desktop || busy || browsing) return;
+    setStatus("ai");
+    setError("");
+    setAiReports(null);
+    try { setAiReports(await api.aiData(roots)); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setStatus("idle"); }
   }
   function prepare() {
     void prepareItems(selectedItems.map((i) => i.id));
@@ -372,6 +395,7 @@ export default function App() {
       const listing = await api.children(item.id, relative, offset);
       if (request !== browseRequest.current) return;
       setBrowse((previous) => ({
+        ...listing,
         item,
         relative,
         children:
@@ -475,6 +499,10 @@ export default function App() {
             项目账本
             <ChevronRight size={14} />
           </button>
+          <button className={view === "ai" ? "nav active" : "nav"} onClick={() => setView("ai")}>
+            <Sparkles size={18} />AI 工作数据<ChevronRight size={14} />
+          </button>
+          <button className={view === "residue" ? "nav active" : "nav"} onClick={() => setView("residue")}><Package size={18} />应用残留检查<ChevronRight size={14} /></button>
           <button
             className={view === "history" ? "nav active" : "nav"}
             onClick={() => setView("history")}
@@ -497,7 +525,7 @@ export default function App() {
           </div>
         </div>
         <div className="sidebar-footer">
-          <span>macOS · 版本 0.9.2</span>
+          <span>macOS · 版本 {appVersion}</span>
           <span className="edition">本地版</span>
         </div>
       </aside>
@@ -509,7 +537,7 @@ export default function App() {
               ? "空间概览"
               : view === "projects"
                 ? "项目账本"
-                : "清理记录"}
+                : view === "ai" ? "AI 工作数据" : view === "residue" ? "应用残留检查" : "清理记录"}
           </span>
           <div>
             <span className="tiny-dot" />
@@ -539,21 +567,21 @@ export default function App() {
                   ? "磁盘分析"
                   : view === "projects"
                     ? "项目分析"
-                    : "操作记录"}
+                    : view === "ai" ? "只读数据账本" : view === "residue" ? "只读关联线索" : "操作记录"}
               </div>
               <h1>
                 {view === "overview"
                   ? "磁盘空间"
                   : view === "projects"
                     ? "项目空间"
-                    : "清理记录"}
+                    : view === "ai" ? "AI 工作数据" : view === "residue" ? "应用残留检查" : "清理记录"}
               </h1>
               <p>
                 {view === "overview"
                   ? "先扫描查看占用，再预览需要清理的内容。"
                   : view === "projects"
                     ? "查看项目产物、模型引用与运行依赖。"
-                    : "查看执行结果与磁盘可用空间变化，最多保留最近 100 次。"}
+                    : view === "ai" ? "了解 AI 工具的数据占用、保护依据与处理影响。" : view === "residue" ? "先看关联依据与覆盖范围，不将候选当作可删除项。" : "查看执行结果与磁盘可用空间变化，最多保留最近 100 次。"}
               </p>
             </div>
             {view === "overview" && (
@@ -626,10 +654,11 @@ export default function App() {
                   {progress ? `正在分析 ${progress.name}` : "准备扫描…"}
                 </strong>
                 <span>
-                  {progress
+                  {progress && progress.total > 0
                     ? `${progress.done + 1} / ${progress.total} · ${progress.files.toLocaleString()} 个条目`
                     : "正在发现缓存路径与主要目录"}
                 </span>
+                <ScanWait phase={progress?.name ?? "准备扫描"} />
                 <button
                   onClick={() =>
                     void api.cancel().catch((e) => setError(errorMessage(e)))
@@ -639,7 +668,7 @@ export default function App() {
                 </button>
               </div>
               <progress
-                max={progress?.total ?? 23}
+                max={progress?.total || 23}
                 value={progress?.done ?? 0}
               />
             </div>
@@ -737,9 +766,11 @@ export default function App() {
                 <p className="scan-scope-summary" role="status">
                   <Folder size={14} />
                   本次范围：{scan.extended === false ? "常规缓存" : "扩展目录"}
-                  <span>· 仅统计已读取范围</span>
+                  <span>· 仅统计已读取范围{scan.extended === true && ` · ${scan.items.length} 个固定／发现项目，${scan.roots.length} 个主要目录`}</span>
                 </p>
               )}
+              {scan?.extended === true && <p className="scan-root-summary">主要目录：{scan.roots.length ? scan.roots.map((r) => r.name).join("、") : "未选择；仅分析扩展固定／发现项目"}。未选择的位置不代表零占用，范围之间可能重叠。</p>}
+              {scan && <ScanTiming scan={scan} />}
               {scan && <ScanCoverage key={`coverage-${scan.id}`} scan={scan} />}
               {scan && (
                 <CleanupAnalysis
@@ -751,6 +782,7 @@ export default function App() {
                   onFilter={showCleanupFilter}
                 />
               )}
+              <ObservationOverview project={projectReport} ai={aiReports} onNavigate={setView} />
               {scan && scan.roots.length > 0 && (
                 <section className="root-inventory" aria-label="主要目录总览">
                   <details className="directory-overview">
@@ -804,38 +836,24 @@ export default function App() {
                 </section>
               )}
               {result && (
-                <section
-                  className={`result-card ${result.outcomes.some((outcome) => !outcome.success) ? "result-partial" : ""}`}
-                  aria-live="polite"
-                >
-                  {result.outcomes.every((outcome) => outcome.success) ? (
-                    <CircleCheck size={24} />
-                  ) : (
-                    <TriangleAlert size={24} />
-                  )}
-                  <div>
-                    <strong>
-                      {result.outcomes.every((o) => o.success)
-                        ? "命令均已完成，请查看核验结果"
-                        : "清理已结束，包含失败或跳过项目"}
-                    </strong>
-                    <p>
-                      <SpaceChange record={result} />
-                      。这是所测数据卷在操作期间的变化，其他进程、共享文件和快照均可能影响，不能归因于本次清理。
-                    </p>
-                    {result.warning && (
-                      <p className="warning-text">{result.warning}</p>
-                    )}
-                    {result.outcomes.map((o) => (
-                      <CleanupOutcome key={o.name} outcome={o} />
-                    ))}
-                  </div>
-                  <button className="text-button" onClick={startScan}>
-                    重新扫描 <RefreshCw size={14} />
-                  </button>
-                </section>
+                <CleanupResult
+                  record={result}
+                  disabled={!desktop || busy || browsing}
+                  onRescan={startScan}
+                  onReview={() => {
+                    showCleanupFilter("all");
+                    requestAnimationFrame(() =>
+                      inventoryRef.current?.focus({ preventScroll: true }),
+                    );
+                  }}
+                />
               )}
-              <section className="inventory" ref={inventoryRef}>
+              <section
+                className="inventory"
+                ref={inventoryRef}
+                tabIndex={-1}
+                aria-label="空间清单"
+              >
                 <div className="section-heading">
                   <div>
                     <h2>
@@ -845,7 +863,9 @@ export default function App() {
                     <p>
                       {scan
                         ? `${scan.cancelled ? "扫描已停止，显示部分结果" : "最近扫描"} · ${preview ? "示例数据" : `${(scan.durationMs / 1000).toFixed(1)} 秒`}`
-                        : "先扫描，再查看占用与清理影响"}
+                        : result
+                          ? "扫描结果已失效。请重新扫描确认剩余项目，再预览和确认清理。"
+                          : "先扫描，再查看占用与清理影响"}
                     </p>
                   </div>
                   <span className="readonly-label">
@@ -897,7 +917,9 @@ export default function App() {
                     <h3>
                       {status === "scan"
                         ? "正在认识你的磁盘"
-                        : "空间的去向，从这里开始"}
+                        : result
+                          ? "重新确认剩余空间"
+                          : "空间的去向，从这里开始"}
                     </h3>
                     <p>
                       {status === "scan"
@@ -910,7 +932,7 @@ export default function App() {
                         disabled={!desktop || busy}
                         onClick={startScan}
                       >
-                        开始第一次扫描 <ArrowRight size={16} />
+                        {result ? "重新扫描" : "开始第一次扫描"} <ArrowRight size={16} />
                       </button>
                     )}
                   </div>
@@ -1164,6 +1186,12 @@ export default function App() {
               }
               onCaches={() => setView("overview")}
             />
+          ) : view === "residue" ? (
+            <AppResidue desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={() => void inspectResidue()} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} />
+          ) : view === "ai" ? (
+            <AiData desktop={desktop} busy={busy || browsing} scanning={status === "ai"}
+              reports={aiReports} baselines={aiBaselines} onBaseline={(report) => setAiBaselines((previous) => [...previous.filter((b) => b.tool !== report.tool || b.root !== report.root), report])} onAnalyze={(roots) => void analyzeAi(roots)}
+              onCancel={() => void api.cancel().catch((e) => setError(errorMessage(e)))} />
           ) : (
             <section className="history-list">
               {history.length === 0 ? (
@@ -1327,6 +1355,7 @@ export default function App() {
       </dialog>
       <dialog
         ref={browserRef}
+        className="directory-dialog"
         aria-labelledby="browse-title"
         onCancel={closeBrowser}
       >
@@ -1375,20 +1404,10 @@ export default function App() {
               ，占用为下限；重新打开可重试。
             </p>
           )}
-          {browse?.relative && (
-            <button
-              className="text-button"
-              disabled={browsing}
-              onClick={() =>
-                void openBrowser(
-                  browse.item,
-                  browse.relative.split("/").slice(0, -1).join("/"),
-                )
-              }
-            >
-              ← 返回上一级
-            </button>
-          )}
+          {browse && <DirectoryInsights key={browse.item.id}
+            data={browse} relative={browse.relative} busy={browsing}
+            onOpen={relative => void openBrowser(browse.item, relative)}
+            onReveal={relative => api.revealFile(browse.item.id, relative, browse.measuredAt)}>
           <div className="browse-list">
             {browse?.children.map((c) => (
               <button
@@ -1441,16 +1460,17 @@ export default function App() {
               )}
             </div>
           )}
+          </DirectoryInsights>}
         </div>
       </dialog>
       {scanRequest && (
         <ScanAccess
           root={scanRequest.root}
           onCancel={() => setScanRequest(null)}
-          onStart={(extended) => {
+          onStart={(extended, rootIds) => {
             const root = scanRequest.root;
             setScanRequest(null);
-            if (root === null) void runScan(extended);
+            if (root === null) void runScan(extended, rootIds);
             else void scanProjects(root);
           }}
         />

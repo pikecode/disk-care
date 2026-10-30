@@ -1,3 +1,9 @@
+#[path = "app_residue.rs"]
+mod app_residue;
+pub use app_residue::ResidueReport;
+#[path = "ai_data.rs"]
+mod ai_data;
+pub use ai_data::{AiReport, AiRoot};
 #[path = "model_storage.rs"]
 mod model_storage;
 use serde::{Deserialize, Serialize};
@@ -5,7 +11,8 @@ use serde::{Deserialize, Serialize};
 mod projects;
 pub use projects::ProjectReport;
 use std::{
-    collections::{HashMap, HashSet},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, HashSet},
     fs,
     hash::{Hash, Hasher},
     io::{Read, Write},
@@ -43,6 +50,26 @@ pub struct Coverage {
     pub excluded: u64,
     pub limited: bool,
     pub cancelled: bool,
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagnostic {
+    pub path: String,
+    pub reason: String,
+    pub message: String,
+}
+impl Coverage {
+    fn diagnose(&mut self, path: &Path, reason: &str, message: &str) {
+        if self.diagnostics.len() < 50 {
+            self.diagnostics.push(Diagnostic {
+                path: path.to_string_lossy().chars().take(4096).collect(),
+                reason: reason.into(),
+                message: message.chars().take(1024).collect(),
+            });
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +114,15 @@ pub struct Scan {
     pub roots: Vec<Item>,
     pub duration_ms: u64,
     pub cancelled: bool,
+    #[serde(default)]
+    pub timings: Vec<ScanTiming>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanTiming {
+    pub id: String,
+    pub name: String,
+    pub duration_ms: Option<u64>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,12 +141,33 @@ pub struct Listing {
     pub measured_at: u64,
     pub complete: bool,
     pub issues: u64,
+    pub coverage: Coverage,
+    pub map_items: Vec<Item>,
+    pub other_bytes: u64,
+    pub other_count: usize,
+    pub large_files: Vec<LargeFile>,
+    pub large_files_total: usize,
+}
+#[derive(Clone, Serialize, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[serde(rename_all = "camelCase")]
+pub struct LargeFile {
+    pub logical_bytes: u64,
+    pub path: String,
+    pub allocated_bytes: u64,
+    pub modified_at: Option<u64>,
+    pub relative: String,
+    #[serde(skip)]
+    device: u64,
+    #[serde(skip)]
+    inode: u64,
 }
 #[derive(Clone)]
 struct Directory {
     items: Vec<Item>,
     measured_at: u64,
     stats: Stats,
+    large_files: Vec<LargeFile>,
+    large_files_total: usize,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -304,6 +361,7 @@ pub struct Engine {
     busy: AtomicBool,
     cleaning: AtomicBool,
     directories: Mutex<HashMap<PathBuf, Directory>>,
+    residue: Mutex<Option<ResidueReport>>,
 }
 struct Job<'a>(&'a AtomicBool);
 impl Drop for Job<'_> {
@@ -323,6 +381,7 @@ impl Engine {
             busy: AtomicBool::new(false),
             cleaning: AtomicBool::new(false),
             directories: Mutex::new(HashMap::new()),
+            residue: Mutex::new(None),
         }
     }
     fn job(&self) -> Result<Job<'_>, String> {
@@ -337,6 +396,11 @@ impl Engine {
     pub fn disk(&self) -> Result<Disk, String> {
         disk(&self.home)
     }
+    pub fn ai_data(&self, roots: Vec<AiRoot>) -> Result<Vec<AiReport>, String> {
+        let _job = self.job()?;
+        self.cancel.store(false, Ordering::SeqCst);
+        ai_data::analyze(&self.home, roots, &self.cancel)
+    }
     pub fn projects(
         &self,
         root: String,
@@ -346,16 +410,37 @@ impl Engine {
         self.cancel.store(false, Ordering::SeqCst);
         projects::scan(&self.home, &root, &self.cancel, progress)
     }
-    pub fn scan(&self, extended: bool, progress: impl Fn(Progress)) -> Result<Scan, String> {
+    pub fn scan_roots(&self) -> Vec<Item> {
+        analysis_roots(&self.home)
+    }
+    pub fn scan(
+        &self,
+        extended: bool,
+        root_ids: Option<Vec<String>>,
+        progress: impl Fn(Progress),
+    ) -> Result<Scan, String> {
+        let roots = selected_analysis_roots(&self.home, extended, root_ids)?;
         let _job = self.job()?;
         self.cancel.store(false, Ordering::SeqCst);
+        let start = Instant::now();
+        progress(Progress {
+            name: "准备扫描目标".into(),
+            done: 0,
+            total: 0,
+            files: 0,
+        });
         let targets = self.discover_targets(extended);
-        let roots = if extended {
-            analysis_roots(&self.home)
-        } else {
-            vec![]
+        let preparation = ScanTiming {
+            id: "discovery".into(),
+            name: "准备扫描目标".into(),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
         };
-        self.scan_targets(targets, roots, progress)
+        let mut scan = self.scan_targets(targets, roots, progress)?;
+        scan.extended = extended;
+        scan.timings.insert(0, preparation);
+        scan.duration_ms = start.elapsed().as_millis() as u64;
+        *self.scan.lock().map_err(|_| "扫描状态不可用")? = Some(scan.clone());
+        Ok(scan)
     }
     fn scan_targets(
         &self,
@@ -371,18 +456,28 @@ impl Engine {
         let start = Instant::now();
         let extended = !roots.is_empty();
         let total = targets.len() + roots.len();
+        let mut timings = Vec::new();
         let mut items = Vec::new();
         for (done, mut item) in targets.into_iter().enumerate() {
-            if self.cancel.load(Ordering::SeqCst) {
+            let stage_start = Instant::now();
+            let pending = self.cancel.load(Ordering::SeqCst);
+            if pending {
                 mark_pending(&mut item);
             } else {
                 self.measure_item(&mut item, done, total, 45, &progress)?;
             }
+            timings.push(ScanTiming {
+                id: item.id.clone(),
+                name: item.name.clone(),
+                duration_ms: (!pending).then(|| stage_start.elapsed().as_millis() as u64),
+            });
             items.push(item);
         }
         let mut measured_roots = Vec::new();
         for mut root in roots.drain(..) {
-            if self.cancel.load(Ordering::SeqCst) {
+            let stage_start = Instant::now();
+            let pending = self.cancel.load(Ordering::SeqCst);
+            if pending {
                 mark_pending(&mut root);
             } else {
                 self.measure_item(
@@ -393,6 +488,11 @@ impl Engine {
                     &progress,
                 )?;
             }
+            timings.push(ScanTiming {
+                id: root.id.clone(),
+                name: root.name.clone(),
+                duration_ms: (!pending).then(|| stage_start.elapsed().as_millis() as u64),
+            });
             measured_roots.push(root);
         }
         let scan = Scan {
@@ -403,6 +503,7 @@ impl Engine {
             roots: measured_roots,
             duration_ms: start.elapsed().as_millis() as u64,
             cancelled: self.cancel.load(Ordering::SeqCst),
+            timings,
         };
         *self.scan.lock().map_err(|_| "扫描状态不可用")? = Some(scan.clone());
         Ok(scan)
@@ -441,6 +542,19 @@ impl Engine {
                 excluded: u64::from(excluded_app_data(&path)),
                 ..Coverage::default()
             });
+            if let Some(coverage) = &mut item.coverage {
+                coverage.diagnose(
+                    &path,
+                    if denied {
+                        "permissionDenied"
+                    } else if excluded_app_data(&path) {
+                        "excluded"
+                    } else {
+                        "pathCheck"
+                    },
+                    &reason,
+                );
+            }
             item.blocked = Some(reason);
             return Ok(());
         }
@@ -526,8 +640,11 @@ impl Engine {
                         if actual != default {
                             item.path = actual.to_string_lossy().into();
                             if let Some(evidence) = &mut item.evidence {
-                                evidence.source = "工具缓存配置查询；自定义路径仅供分析".into();
-                                evidence.scope = "工具配置返回的缓存目录仅供只读分析；目录保护按钮仅影响默认 .cache/uv".into();
+                                evidence
+                                    .source
+                                    .push_str("；工具缓存配置查询：自定义路径仅供分析");
+                                evidence.scope =
+                                    "工具配置返回的缓存目录仅供只读分析；不会清理自定义目录".into();
                             }
                             item.command = None;
                             item.blocked = Some(
@@ -545,7 +662,9 @@ impl Engine {
                             }
                         } else {
                             if let Some(evidence) = &mut item.evidence {
-                                evidence.source = "已查询工具，确认当前默认缓存位置".into();
+                                evidence
+                                    .source
+                                    .push_str("；已查询工具，确认当前默认缓存位置");
                             }
                             item.details
                                 .push("已查询工具，确认当前默认缓存位置。".into());
@@ -616,6 +735,17 @@ impl Engine {
                 protected,
             });
         }
+        if let Some((rule_id, scope, recovery, reference)) = match r.id {
+            "npm" => Some(("dev.npm-cache", "当前主目录 .npm/_cacache 下载缓存；不包括 _npx、项目 node_modules、配置或凭据", "下次安装需重新下载；可能需要网络、私有源凭据及重新构建。npm 缓存通常可自修复，无需例行清空。", "https://docs.npmjs.com/cli/v11/commands/npm-cache/")),
+            "pip" => Some(("dev.pip-cache", "当前主目录 Library/Caches/pip 缓存；不包括已安装包、虚拟环境、配置或凭据", "清除 HTTP 与 wheel 缓存，下次安装需重新下载或构建；可能需要网络、编译工具及私有源凭据。", "https://pip.pypa.io/en/stable/cli/pip_cache/")),
+            _ => None,
+        } {
+            evidence = Some(RuleEvidence {
+                rule_id: rule_id.into(), version: 1,
+                source: format!("固定默认路径；预览及执行前重新查询工具配置；官方命令依据：{reference}"),
+                scope: scope.into(), recovery: recovery.into(), protected: false,
+            });
+        }
         Item {
             id: r.id.into(),
             name: r.name.into(),
@@ -677,7 +807,11 @@ impl Engine {
             .lock()
             .map_err(|_| "目录缓存不可用")?
             .get(&path)
-            .filter(|c| c.stats.complete && now().saturating_sub(c.measured_at) < 5 * 60 * 1000)
+            .filter(|c| {
+                c.stats.complete
+                    && c.stats.issues == 0
+                    && now().saturating_sub(c.measured_at) < 5 * 60 * 1000
+            })
             .cloned();
         if offset > 0 && cached.is_none() {
             return Err("目录缓存已过期，请重新打开目录".into());
@@ -704,8 +838,31 @@ impl Engine {
         if offset > total {
             return Err("分页位置无效，请重新打开目录".into());
         }
+        let mut map_items: Vec<Item> = directory
+            .items
+            .iter()
+            .filter(|item| item.bytes > 0)
+            .take(30)
+            .cloned()
+            .collect();
+        let (other_bytes, other_count) = directory
+            .items
+            .iter()
+            .filter(|item| item.bytes > 0)
+            .skip(30)
+            .fold((0u64, 0usize), |(bytes, count), item| {
+                (bytes.saturating_add(item.bytes), count + 1)
+            });
+        let mut large_files = directory.large_files;
+        for file in &mut large_files {
+            file.relative = Path::new(&file.path)
+                .strip_prefix(&root)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .into();
+        }
         let mut items: Vec<Item> = directory.items.into_iter().skip(offset).take(200).collect();
-        for child in &mut items {
+        for child in items.iter_mut().chain(&mut map_items) {
             child.id = Path::new(&child.path)
                 .strip_prefix(&root)
                 .map_err(|e| e.to_string())?
@@ -713,7 +870,10 @@ impl Engine {
                 .into();
         }
         Ok(Listing {
-            next_offset: if directory.stats.complete && offset + items.len() < total {
+            next_offset: if directory.stats.complete
+                && directory.stats.issues == 0
+                && offset + items.len() < total
+            {
                 Some(offset + items.len())
             } else {
                 None
@@ -723,7 +883,58 @@ impl Engine {
             measured_at: directory.measured_at,
             complete: directory.stats.complete && directory.stats.issues == 0,
             issues: directory.stats.issues,
+            coverage: directory.stats.coverage(),
+            map_items,
+            other_bytes,
+            other_count,
+            large_files,
+            large_files_total: directory.large_files_total,
         })
+    }
+    pub fn observed_file(
+        &self,
+        id: &str,
+        relative: &str,
+        measured_at: u64,
+    ) -> Result<PathBuf, String> {
+        let _job = self.job()?;
+        let relative = Path::new(relative);
+        if relative.as_os_str().is_empty()
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            return Err("文件相对路径无效".into());
+        }
+        let scan = self.scan.lock().map_err(|_| "扫描状态不可用")?;
+        let scan = scan.as_ref().ok_or("请重新扫描")?;
+        let root = scan
+            .items
+            .iter()
+            .chain(&scan.roots)
+            .find(|item| item.id == id)
+            .ok_or("该目录不在当前扫描结果中")?;
+        let path = Path::new(&root.path).join(relative);
+        checked_read_path(&path)?;
+        let cache = self.directories.lock().map_err(|_| "目录缓存不可用")?;
+        let observed = cache
+            .values()
+            .filter(|directory| {
+                directory.measured_at == measured_at
+                    && now().saturating_sub(directory.measured_at) < 5 * 60 * 1000
+            })
+            .flat_map(|directory| &directory.large_files)
+            .find(|file| Path::new(&file.path) == path)
+            .ok_or("文件观测已过期或不在清单中，请重新打开目录")?;
+        let metadata = fs::symlink_metadata(&path).map_err(|e| format!("无法定位文件：{e}"))?;
+        if !metadata.is_file()
+            || metadata.dev() != observed.device
+            || metadata.ino() != observed.inode
+        {
+            return Err("文件类型或身份已变化，请重新打开目录".into());
+        }
+        Ok(path)
     }
     pub fn prepare(&self, scan_id: u64, ids: Vec<String>) -> Result<Plan, String> {
         let _job = self.job()?;
@@ -766,7 +977,9 @@ impl Engine {
             self.verify_snapshot(&r, old)?;
             let mut preview = old.clone();
             if let Some(evidence) = &mut preview.evidence {
-                evidence.source = "预览已重新查询 uv 配置并复核元数据；执行前还将复核".into();
+                evidence
+                    .source
+                    .push_str("；预览已重新查询工具配置并复核处理条件；执行前还将复核");
             }
             items.push(preview);
         }
@@ -1014,6 +1227,36 @@ fn readonly_item(id: &str, name: &str, path: &Path) -> Item {
         snapshot: None,
     }
 }
+fn selected_analysis_roots(
+    home: &Path,
+    extended: bool,
+    ids: Option<Vec<String>>,
+) -> Result<Vec<Item>, String> {
+    if !extended {
+        return if ids.is_some() {
+            Err("常规扫描不接受主要目录选择".into())
+        } else {
+            Ok(vec![])
+        };
+    }
+    let roots = analysis_roots(home);
+    let Some(ids) = ids else {
+        return Ok(roots);
+    };
+    let mut selected = HashSet::new();
+    if ids.len() > roots.len()
+        || ids
+            .iter()
+            .any(|id| !selected.insert(id.clone()) || !roots.iter().any(|root| &root.id == id))
+    {
+        return Err("主要目录选择包含未知、重复或过多的标识，请重新选择".into());
+    }
+    Ok(roots
+        .into_iter()
+        .filter(|root| selected.contains(&root.id))
+        .collect())
+}
+
 fn analysis_roots(home: &Path) -> Vec<Item> {
     vec![
         ("root-home", "用户主目录", home.to_path_buf()),
@@ -1099,13 +1342,23 @@ struct Stats {
     limited: bool,
     cancelled: bool,
     fingerprint: u64,
+    diagnostics: Coverage,
 }
 impl Stats {
-    fn error(&mut self, error: &std::io::Error) {
+    fn error(&mut self, path: &Path, error: &std::io::Error) {
         self.issues += 1;
         if error.kind() == std::io::ErrorKind::PermissionDenied {
             self.permission_denied += 1;
         }
+        self.diagnostics.diagnose(
+            path,
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                "permissionDenied"
+            } else {
+                "ioError"
+            },
+            &error.to_string(),
+        );
     }
     fn coverage(&self) -> Coverage {
         Coverage {
@@ -1127,6 +1380,7 @@ impl Stats {
             excluded: self.excluded,
             limited: self.limited,
             cancelled: self.cancelled,
+            diagnostics: self.diagnostics.diagnostics.clone(),
         }
     }
 }
@@ -1215,6 +1469,8 @@ fn measure_directory(
         ..Stats::default()
     };
     let mut children: Vec<Item> = Vec::new();
+    let mut large_files: BinaryHeap<Reverse<LargeFile>> = BinaryHeap::new();
+    let mut large_files_total = 0;
     let mut stack = vec![(root.to_path_buf(), None::<usize>)];
     let mut seen = HashSet::new();
     let start = Instant::now();
@@ -1229,11 +1485,25 @@ fn measure_directory(
             stats.complete = false;
             stats.cancelled = cancel.load(Ordering::SeqCst);
             stats.limited = !stats.cancelled;
+            stats.diagnostics.diagnose(
+                &path,
+                if stats.cancelled {
+                    "cancelled"
+                } else if stats.files >= 5_000_000 {
+                    "entryLimit"
+                } else {
+                    "timeLimit"
+                },
+                "扫描已停止，后续位置未统计",
+            );
             break;
         }
         if excluded_app_data(&path) {
             stats.excluded += 1;
             stats.complete = false;
+            stats
+                .diagnostics
+                .diagnose(&path, "excluded", "主动跳过其他应用私有数据；不是系统拒绝");
             if let Some(i) = branch {
                 children[i].blocked = Some("已主动跳过其他应用私有数据，未读取。".into());
                 children[i]
@@ -1245,7 +1515,7 @@ fn measure_directory(
         let metadata = match fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(e) => {
-                stats.error(&e);
+                stats.error(&path, &e);
                 if let Some(i) = branch {
                     children[i].issues += 1;
                 }
@@ -1278,6 +1548,28 @@ fn measure_directory(
         stats.files += 1;
         let bytes = metadata.blocks() * 512;
         stats.bytes = stats.bytes.saturating_add(bytes);
+        if metadata.is_file() && metadata.len() >= 1024 * 1024 {
+            large_files_total += 1;
+            if large_files.len() < 100
+                || large_files
+                    .peek()
+                    .is_some_and(|Reverse(file)| metadata.len() > file.logical_bytes)
+            {
+                large_files.push(Reverse(LargeFile {
+                    logical_bytes: metadata.len(),
+                    path: path.to_string_lossy().into(),
+                    allocated_bytes: bytes,
+                    modified_at: (metadata.mtime() >= 0)
+                        .then_some((metadata.mtime().max(0) as u64).saturating_mul(1000)),
+                    relative: String::new(),
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                }));
+                if large_files.len() > 100 {
+                    large_files.pop();
+                }
+            }
+        }
         if let Some(i) = branch {
             children[i].bytes = children[i].bytes.saturating_add(bytes);
             children[i].files += 1;
@@ -1296,6 +1588,17 @@ fn measure_directory(
                             stats.complete = false;
                             stats.cancelled = cancel.load(Ordering::SeqCst);
                             stats.limited = !stats.cancelled;
+                            stats.diagnostics.diagnose(
+                                &path,
+                                if stats.cancelled {
+                                    "cancelled"
+                                } else if queued >= 5_000_000 {
+                                    "entryLimit"
+                                } else {
+                                    "timeLimit"
+                                },
+                                "目录枚举已停止，后续位置未统计",
+                            );
                             break;
                         }
                         match entry {
@@ -1323,7 +1626,7 @@ fn measure_directory(
                                         }
                                         Err(e) => {
                                             item.issues += 1;
-                                            stats.error(&e);
+                                            stats.error(&entry.path(), &e);
                                         }
                                     }
                                     children.push(item);
@@ -1335,7 +1638,7 @@ fn measure_directory(
                                 queued += 1;
                             }
                             Err(e) => {
-                                stats.error(&e);
+                                stats.error(&path, &e);
                                 if let Some(i) = branch {
                                     children[i].issues += 1;
                                 }
@@ -1344,7 +1647,7 @@ fn measure_directory(
                     }
                 }
                 Err(e) => {
-                    stats.error(&e);
+                    stats.error(&path, &e);
                     if let Some(i) = branch {
                         children[i].issues += 1;
                     }
@@ -1364,6 +1667,12 @@ fn measure_directory(
         items: children,
         stats,
         measured_at: now(),
+        large_files: large_files
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Reverse(file)| file)
+            .collect(),
+        large_files_total,
     }
 }
 fn parse_disk(output: &str) -> Result<Disk, String> {
@@ -1832,6 +2141,46 @@ fn models(root: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn diagnostics_are_bounded_and_legacy_coverage_is_compatible() {
+        let mut coverage: Coverage = serde_json::from_str(
+            r#"{"status":"complete","permissionDenied":0,"excluded":0,"limited":false,"cancelled":false}"#,
+        ).unwrap();
+        assert!(coverage.diagnostics.is_empty());
+        for _ in 0..60 {
+            coverage.diagnose(
+                Path::new("/fixture/denied"),
+                "permissionDenied",
+                &"错".repeat(2048),
+            );
+        }
+        assert_eq!(coverage.diagnostics.len(), 50);
+        assert_eq!(coverage.diagnostics[0].message.chars().count(), 1024);
+        assert_eq!(coverage.diagnostics[0].path, "/fixture/denied");
+        let mut stats = Stats::default();
+        stats.error(
+            Path::new("/fixture/failure"),
+            &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert_eq!(stats.coverage().diagnostics[0].reason, "permissionDenied");
+        assert_eq!(stats.coverage().permission_denied, 1);
+    }
+
+    #[test]
+    fn executable_cache_rules_have_separate_evidence_without_changing_scope() {
+        let fixture = Fixture::new();
+        let engine = Engine::new(fixture.0.clone());
+        for id in ["uv", "npm", "pip"] {
+            let item = engine.inspect(&rule(id).unwrap(), &Ok(vec![]));
+            let evidence = item.evidence.unwrap();
+            assert_eq!(evidence.rule_id, format!("dev.{id}-cache"));
+            assert!(!evidence.scope.is_empty() && !evidence.recovery.is_empty());
+            if id != "uv" {
+                assert!(evidence.source.contains("https://"));
+                assert!(!evidence.scope.contains(".cache/uv"));
+            }
+        }
+    }
     use std::os::unix::fs::symlink;
     fn process(args: &str) -> Process {
         Process {
@@ -1841,9 +2190,9 @@ mod tests {
         }
     }
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    struct Fixture(PathBuf);
+    pub(super) struct Fixture(pub(super) PathBuf);
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let p = std::env::temp_dir().join(format!(
                 "disk-care-test-{}-{}",
                 std::process::id(),
@@ -1942,6 +2291,93 @@ mod tests {
         }
     }
     #[test]
+    fn scan_root_selection_is_bounded_and_explicit() {
+        let home = Path::new("/fixture");
+        assert!(selected_analysis_roots(home, false, None)
+            .unwrap()
+            .is_empty());
+        assert_eq!(selected_analysis_roots(home, true, None).unwrap().len(), 8);
+        assert!(selected_analysis_roots(home, true, Some(vec![]))
+            .unwrap()
+            .is_empty());
+        let selected = selected_analysis_roots(
+            home,
+            true,
+            Some(vec!["root-local".into(), "root-home".into()]),
+        )
+        .unwrap();
+        assert_eq!(
+            selected.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["root-home", "root-local"]
+        );
+        assert_eq!(selected[0].path, "/fixture");
+        for ids in [
+            vec!["/tmp".into()],
+            vec!["root-home".into(); 2],
+            vec!["root-home".into(); 9],
+        ] {
+            assert!(selected_analysis_roots(home, true, Some(ids)).is_err());
+        }
+        assert!(selected_analysis_roots(home, false, Some(vec![])).is_err());
+    }
+    #[test]
+    fn stage_timings_distinguish_attempted_and_pending_and_allow_old_results() {
+        let f = Fixture::new();
+        let engine = Engine::new(f.0.clone());
+        let scan = engine
+            .scan_targets(
+                vec![readonly_item("test", "测试", &f.0)],
+                vec![readonly_item("root-home", "测试主目录", &f.0)],
+                |_| {
+                    engine.cancel.store(true, Ordering::SeqCst);
+                },
+            )
+            .unwrap();
+        assert!(scan.cancelled);
+        assert!(scan.timings[0].duration_ms.is_some());
+        assert!(scan.timings[1].duration_ms.is_none());
+        assert_eq!(scan.roots[0].coverage.as_ref().unwrap().status, "pending");
+        let mut old = serde_json::to_value(&scan).unwrap();
+        old.as_object_mut().unwrap().remove("timings");
+        assert!(serde_json::from_value::<Scan>(old)
+            .unwrap()
+            .timings
+            .is_empty());
+    }
+    #[test]
+    fn invalid_scan_scope_does_not_reset_cancellation_or_start_work() {
+        let f = Fixture::new();
+        let engine = Engine::new(f.0.clone());
+        engine.cancel.store(true, Ordering::SeqCst);
+        assert!(engine
+            .scan(true, Some(vec!["unknown".into()]), |_| panic!(
+                "无效范围不应发进度"
+            ))
+            .is_err());
+        assert!(engine.cancel.load(Ordering::SeqCst));
+        assert!(engine.scan.lock().unwrap().is_none());
+    }
+    #[test]
+    fn cancelled_extended_scope_keeps_mode_and_never_falls_back_to_all_roots() {
+        let f = Fixture::new();
+        let engine = Engine::new(f.0.clone());
+        for ids in [vec![], vec!["root-home".to_string()]] {
+            let expected = ids.len();
+            let scan = engine
+                .scan(true, Some(ids), |_| {
+                    engine.cancel.store(true, Ordering::SeqCst);
+                })
+                .unwrap();
+            assert!(scan.extended && scan.cancelled);
+            assert_eq!(scan.roots.len(), expected);
+            assert_eq!(scan.timings[0].id, "discovery");
+            assert!(scan.timings[1..]
+                .iter()
+                .all(|stage| stage.duration_ms.is_none()));
+            assert!(engine.scan.lock().unwrap().as_ref().unwrap().extended);
+        }
+    }
+    #[test]
     fn basic_scan_stays_with_default_caches() {
         let fixture = Fixture::new();
         let engine = Engine::new(fixture.0.clone());
@@ -1954,9 +2390,16 @@ mod tests {
         assert!(targets
             .iter()
             .all(|i| Path::new(&i.path).starts_with(&fixture.0)));
-        let scan = engine.scan(false, |_| {}).unwrap();
+        let scan = engine.scan(false, None, |_| {}).unwrap();
         assert!(scan.roots.is_empty());
         assert_eq!(scan.items.len(), 3);
+        assert_eq!(scan.timings.len(), scan.items.len() + 1);
+        assert_eq!(scan.timings[0].id, "discovery");
+        assert!(scan.timings.iter().all(|stage| stage.duration_ms.is_some()));
+        assert_eq!(
+            engine.scan.lock().unwrap().as_ref().unwrap().duration_ms,
+            scan.duration_ms
+        );
     }
     #[test]
     #[ignore = "仅手动运行本机只读扫描"]
@@ -1964,7 +2407,7 @@ mod tests {
         let home = PathBuf::from(std::env::var_os("HOME").unwrap());
         let engine = Engine::new(home);
         let scan = engine
-            .scan(true, |p| {
+            .scan(true, None, |p| {
                 if p.files == 0 {
                     println!("扫描 {} {}/{}", p.name, p.done, p.total);
                 }
@@ -2312,11 +2755,31 @@ mod tests {
         assert_eq!(first.total, 502);
         assert_eq!(first.items.len(), 200);
         assert_eq!(first.items[0].name, "music");
+        assert_eq!(first.map_items.len(), 30);
+        assert_eq!(first.other_count, 472);
+        let observed: u64 = engine
+            .directories
+            .lock()
+            .unwrap()
+            .get(&root)
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.bytes)
+            .sum();
+        assert_eq!(
+            first.map_items.iter().map(|item| item.bytes).sum::<u64>() + first.other_bytes,
+            observed
+        );
+        assert_eq!(first.large_files.len(), 1);
+        assert_eq!(first.large_files[0].relative, "music/payload");
         assert!(first.items[0].bytes >= 1024 * 1024);
         let second = engine
             .children("downloads", "", first.next_offset.unwrap(), |_| {})
             .unwrap();
         assert_eq!(first.measured_at, second.measured_at);
+        assert_eq!(first.other_bytes, second.other_bytes);
+        assert_eq!(first.map_items[0].id, second.map_items[0].id);
         let last = engine
             .children("downloads", "", second.next_offset.unwrap(), |_| {})
             .unwrap();
@@ -2324,6 +2787,97 @@ mod tests {
         assert!(last.next_offset.is_none());
         let inner = engine.children("downloads", "music", 0, |_| {}).unwrap();
         assert_eq!(inner.items[0].name, "payload");
+    }
+    #[test]
+    fn large_file_inventory_is_bounded_and_reveal_is_snapshot_scoped() {
+        let f = Fixture::new();
+        let root = f.0.join("Downloads");
+        fs::create_dir_all(&root).unwrap();
+        for n in 0..121 {
+            fs::File::create(root.join(format!("large-{n}")))
+                .unwrap()
+                .set_len(2 * 1024 * 1024 + n)
+                .unwrap();
+        }
+        fs::hard_link(root.join("large-120"), root.join("duplicate")).unwrap();
+        symlink(root.join("large-120"), root.join("linked")).unwrap();
+        let engine = Engine::new(f.0.clone());
+        engine.scan_fixture(|_| {}).unwrap();
+        let listing = engine.children("downloads", "", 0, |_| {}).unwrap();
+        assert_eq!(listing.large_files_total, 121);
+        assert_eq!(listing.large_files.len(), 100);
+        assert!(listing
+            .large_files
+            .windows(2)
+            .all(|w| w[0].logical_bytes >= w[1].logical_bytes));
+        let file = &listing.large_files[0];
+        assert_eq!(file.logical_bytes, 2 * 1024 * 1024 + 120);
+        assert!(engine
+            .observed_file("downloads", &file.relative, listing.measured_at)
+            .is_ok());
+        assert!(engine
+            .observed_file("downloads", "../outside", listing.measured_at)
+            .is_err());
+        assert!(engine
+            .observed_file("downloads", "linked", listing.measured_at)
+            .is_err());
+        assert!(engine
+            .observed_file("downloads", &file.relative, 0)
+            .is_err());
+        fs::remove_file(&file.path).unwrap();
+        fs::File::create(&file.path).unwrap();
+        assert!(engine
+            .observed_file("downloads", &file.relative, listing.measured_at)
+            .is_err());
+        let another = &listing.large_files[1];
+        fs::rename(&another.path, root.join("retained")).unwrap();
+        symlink(&f.0, &another.path).unwrap();
+        assert!(engine
+            .observed_file("downloads", &another.relative, listing.measured_at)
+            .is_err());
+        engine
+            .directories
+            .lock()
+            .unwrap()
+            .get_mut(&root)
+            .unwrap()
+            .measured_at = 0;
+        assert!(engine
+            .observed_file(
+                "downloads",
+                &listing.large_files[2].relative,
+                listing.measured_at
+            )
+            .is_err());
+        assert!(engine.children("downloads", "", 200, |_| {}).is_err());
+    }
+    #[test]
+    fn incomplete_directory_does_not_offer_pagination_or_a_complete_ranking() {
+        let f = Fixture::new();
+        let root = f.0.join("Downloads");
+        fs::create_dir_all(&root).unwrap();
+        for n in 0..201 {
+            fs::write(root.join(format!("file-{n}")), "data").unwrap();
+        }
+        let engine = Engine::new(f.0.clone());
+        engine.scan_fixture(|_| {}).unwrap();
+        engine
+            .directories
+            .lock()
+            .unwrap()
+            .get_mut(&root)
+            .unwrap()
+            .stats
+            .issues = 1;
+        assert!(engine.children("downloads", "", 200, |_| {}).is_err());
+        let result = measure_directory(
+            &root,
+            &AtomicBool::new(true),
+            Duration::from_secs(1),
+            |_| {},
+        );
+        assert!(result.stats.cancelled && !result.stats.complete);
+        assert!(result.large_files.is_empty());
     }
     #[test]
     fn readonly_roots_find_unknown_large_directories() {
@@ -2372,6 +2926,7 @@ mod tests {
             items: vec![item],
             roots: vec![],
             duration_ms: 0,
+            timings: vec![],
             cancelled: false,
         });
         assert!(engine
@@ -2523,7 +3078,10 @@ mod tests {
         assert!(invalid.blocked.unwrap().contains("不是目录"));
         assert_eq!(fs::read_to_string(not_directory).unwrap(), "保留");
         let mut stats = Stats::default();
-        stats.error(&std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        stats.error(
+            Path::new("/fixture/denied"),
+            &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
         assert_eq!(stats.coverage().status, "denied");
         assert_eq!(stats.coverage().permission_denied, 1);
         let limited =

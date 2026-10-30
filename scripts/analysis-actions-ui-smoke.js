@@ -63,6 +63,7 @@ async (page) => {
       },
       async invoke(cmd, args) {
         window.actionCalls.push({ cmd, args });
+        if (cmd === "scan_roots") return [{ id: "root-home", name: "用户主目录", path: "/Users/fixture" }, { id: "root-shared", name: "共享用户文件", path: "/Users/Shared" }];
         if (cmd.startsWith("plugin:event|")) return 1;
         if (cmd === "disk_info") return disk;
         if (cmd === "cleanup_history") return [];
@@ -197,7 +198,7 @@ async (page) => {
   await page
     .locator(".inventory")
     .screenshot({ path: "output/playwright/analysis-actions-070.png" });
-  await page.getByRole("button", { name: "查看项目账本", exact: true }).click();
+  await page.getByRole("region", { name: "空间清单", exact: true }).getByRole("button", { name: "查看项目账本", exact: true }).click();
   await page
     .getByRole("heading", { name: "项目空间", exact: true })
     .waitFor();

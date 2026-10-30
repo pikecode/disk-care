@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "./api";
 import type { Coverage, Scan } from "./types";
+import CoverageDiagnostics from "./CoverageDiagnostics";
 
 const labels: Record<Coverage["status"], string> = {
   complete: "已扫描",
@@ -70,6 +71,7 @@ export default function ScanCoverage({ scan }: { scan: Scan }) {
                   {item.blocked ??
                     "未完成统计；请检查访问权限、扫描限额或取消状态。"}
                 </span>
+                {item.coverage && <CoverageDiagnostics coverage={item.coverage} />}
               </li>
             ))}
           </ul>

@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "disk-care"
-version = "0.9.2"
+version = "0.9.10"
 dependencies = [
  "libc",
  "serde",

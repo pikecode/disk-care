@@ -1,9 +1,15 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { Disk, Listing, Plan, ProjectReport, Record, Scan } from "./types";
+import type { ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
 export const desktop = isTauri();
 export const api = {
+  inspectResidue: () => invoke<ResidueReport>("inspect_app_residue", { preset: "cc-switch" }),
+  revealResidue: (reportId: number, candidateId: number) => invoke<void>("reveal_residue_candidate", { reportId, candidateId }),
+  revealFile: (id: string, relative: string, measuredAt: number) =>
+    invoke<void>("reveal_observed_file", { id, relative, measuredAt }),
+  aiData: (roots: AiRoot[]) => invoke<AiReport[]>("analyze_ai_data", { roots }),
   disk: () => invoke<Disk>("disk_info"),
-  scan: (extended = false) => invoke<Scan>("scan_disk", { extended }),
+  scanRoots: () => invoke<Item[]>("scan_roots"),
+  scan: (extended = false, rootIds?: string[]) => invoke<Scan>("scan_disk", { extended, rootIds }),
   revealApp: () => invoke<string>("reveal_current_app"),
   privacySettings: () => invoke<void>("open_privacy_settings"),
   cancel: () => invoke<void>("cancel_scan"),

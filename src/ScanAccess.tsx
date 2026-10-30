@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, FolderSearch, Layers3, LockKeyhole, X } from "lucide-react";
+import type { Item } from "./types";
 import { api } from "./api";
 
 export default function ScanAccess({
@@ -9,10 +10,14 @@ export default function ScanAccess({
 }: {
   root: string | null;
   onCancel: () => void;
-  onStart: (extended: boolean) => void;
+  onStart: (extended: boolean, rootIds?: string[]) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [extended, setExtended] = useState(false);
+  const [roots, setRoots] = useState<Item[] | null>(null);
+  const [rootIds, setRootIds] = useState<string[]>([]);
+  const [rootError, setRootError] = useState("");
+  const [retry, setRetry] = useState(0);
   const [ack, setAck] = useState(false);
   const [appPath, setAppPath] = useState("");
   const [locating, setLocating] = useState(false);
@@ -21,6 +26,25 @@ export default function ScanAccess({
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
+  useEffect(() => {
+    if (!extended || root !== null) return;
+    let active = true;
+    setRoots(null);
+    setRootError("");
+    void api.scanRoots().then((options) => {
+      if (!active) return;
+      setRoots(options);
+      setRootIds(options.map((option) => option.id));
+      setAck(false);
+    }).catch((e) => {
+      if (active) setRootError(String(e));
+    });
+    return () => { active = false; };
+  }, [extended, root, retry]);
+  function choose(ids: string[]) {
+    setRootIds(ids);
+    setAck(false);
+  }
   function select(value: boolean) {
     setExtended(value);
     setAck(false);
@@ -113,6 +137,15 @@ export default function ScanAccess({
             </div>
           </div>
         )}
+        {root === null && extended && <fieldset className="scan-root-options">
+          <legend>选择本次主要目录</legend>
+          <p>扩展固定项目仍包含开发缓存、下载和默认 Ollama 模型等；取消主目录不会排除这些项目。只读分析不会删除文件。</p>
+          {rootError ? <><p role="alert">目录选项加载失败：{rootError}。未开始扫描。</p><button className="text-button" onClick={() => { setAck(false); setRetry((n) => n + 1); }}>重新加载目录</button></> : !roots ? <p role="status">正在加载目录选项…</p> : <>
+            <div className="scan-root-actions"><button className="text-button" onClick={() => choose(roots.map((r) => r.id))}>选择全部主要目录</button><button className="text-button" onClick={() => choose([])}>取消全部主要目录</button><span>已选 {rootIds.length} / {roots.length}</span></div>
+            {roots.map((option) => <label key={option.id}><input type="checkbox" aria-label={`选择主要目录：${option.name}`} checked={rootIds.includes(option.id)} onChange={(e) => choose(e.target.checked ? [...rootIds, option.id] : rootIds.filter((id) => id !== option.id))} /><span>{option.name}<code>{option.path}</code></span></label>)}
+            <p>所选目录和固定项目可能重叠，占用不能相加；未选主要目录不作为“扫描完成”或零占用。{rootIds.length === 0 && "本次不扫描主要目录，仅分析扩展固定项目。"}</p>
+          </>}
+        </fieldset>}
         <details className="settings-details" key={root ?? String(extended)}>
           <summary>
             {root !== null
@@ -125,13 +158,7 @@ export default function ScanAccess({
             <p>读取所选目录的项目标记、构建产物和有限配置；同时读取 ~/.ollama/models 默认仓库的模型清单与文件元数据，用于分析占用和引用。不读取模型正文，不执行项目脚本，不支持自定义模型目录。</p>
           ) : extended ? (
             <>
-              <p>
-                主要目录：<code>~</code>、<code>/Applications</code>、
-                <code>/opt</code>、<code>/Library</code>、
-                <code>/private/var</code>、
-                <code>/System/Volumes/Data/System</code>、
-                <code>/Users/Shared</code>、<code>/usr/local</code>。
-              </p>
+              <p>主要目录以本次上方勾选为准，后端只接受内置目录标识，不接受任意路径。</p>
               <p>
                 包含开发缓存、下载目录与 Ollama
                 模型。跳过常见应用私有数据目录，包括 Library 下的
@@ -236,8 +263,8 @@ export default function ScanAccess({
           </button>
           <button
             className="button primary"
-            disabled={needsConfirmation && !ack}
-            onClick={() => onStart(extended)}
+            disabled={(needsConfirmation && !ack) || (root === null && extended && (!roots || !!rootError))}
+            onClick={() => onStart(extended, root === null && extended ? rootIds : undefined)}
           >
             {root !== null
               ? "开始项目扫描"

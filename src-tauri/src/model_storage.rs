@@ -73,7 +73,7 @@ fn open_at(parent: &File, name: &std::ffi::OsStr, directory: bool) -> std::io::R
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
-fn open_directory(path: &Path) -> std::io::Result<File> {
+pub(super) fn open_directory(path: &Path) -> std::io::Result<File> {
     let mut file = File::open("/")?;
     for part in path.components() {
         match part {
@@ -89,13 +89,26 @@ fn open_directory(path: &Path) -> std::io::Result<File> {
     }
     Ok(file)
 }
-fn open_descendant_directory(root: &File, parts: &[String]) -> std::io::Result<File> {
+pub(super) fn open_descendant_directory(root: &File, parts: &[String]) -> std::io::Result<File> {
     // 队列只保留名称；每次从固定根逐级禁止链接，避免积压兄弟目录句柄。
     parts.iter().try_fold(root.try_clone()?, |dir, name| {
         open_at(&dir, std::ffi::OsStr::new(name), true)
     })
 }
-fn directory_names(dir: &File, limit: usize) -> std::io::Result<Vec<OsString>> {
+pub(super) fn directory_names(dir: &File, limit: usize) -> std::io::Result<Vec<OsString>> {
+    let (names, complete) = directory_names_until(dir, limit, || false)?;
+    if complete {
+        Ok(names)
+    } else {
+        Err(std::io::Error::other("目录条目达到上限"))
+    }
+}
+
+pub(super) fn directory_names_until(
+    dir: &File,
+    limit: usize,
+    mut stopped: impl FnMut() -> bool,
+) -> std::io::Result<(Vec<OsString>, bool)> {
     let fd = unsafe { libc::dup(dir.as_raw_fd()) };
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
@@ -110,6 +123,9 @@ fn directory_names(dir: &File, limit: usize) -> std::io::Result<Vec<OsString>> {
     }
     let mut names = Vec::new();
     let result = loop {
+        if stopped() {
+            break Ok((names, false));
+        }
         #[cfg(target_os = "macos")]
         unsafe {
             *libc::__error() = 0;
@@ -122,7 +138,7 @@ fn directory_names(dir: &File, limit: usize) -> std::io::Result<Vec<OsString>> {
         if entry.is_null() {
             let err = std::io::Error::last_os_error();
             break if err.raw_os_error() == Some(0) {
-                Ok(names)
+                Ok((names, true))
             } else {
                 Err(err)
             };
@@ -132,7 +148,7 @@ fn directory_names(dir: &File, limit: usize) -> std::io::Result<Vec<OsString>> {
             continue;
         }
         if names.len() >= limit {
-            break Err(std::io::Error::other("目录条目达到上限"));
+            break Ok((names, false));
         }
         names.push(OsString::from_vec(bytes.to_vec()));
     };

@@ -14,6 +14,7 @@ async (page) => {
       },
       async invoke(cmd, args) {
         window.clarityCalls.push(cmd);
+        if (cmd === "scan_roots") return [{ id: "root-home", name: "用户主目录", path: "/Users/fixture" }, { id: "root-shared", name: "共享用户文件", path: "/Users/Shared" }];
         if (cmd.startsWith("plugin:event|")) return 1;
         if (cmd === "cleanup_history") return [];
         const disk = {

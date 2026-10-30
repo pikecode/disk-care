@@ -34,6 +34,45 @@ export default function CleanupAnalysis({
           <p>先查看影响，再预览清理。以下内容不会自动勾选。</p>
         </div>
       </header>
+      {expired && (
+        <p className="warning-text" role="status">
+          扫描已超过 30 分钟，请重新扫描后预览。
+        </p>
+      )}
+      {scan.cancelled && (
+        <p className="analysis-note">
+          扫描已停止，其他可处理数据可能遗漏；仅独立完整的缓存可以预览。
+        </p>
+      )}
+      <div className="analysis-candidates">
+        {analysis.available.map((item) => (
+          <article key={item.id}>
+            <div className="candidate-identity">
+              <strong>{item.name}</strong>
+              <b>{bytes(item.bytes)}</b>
+            </div>
+            <div className="candidate-impact">
+              <p>{item.impact}</p>
+              {item.id === "uv" && (
+                <p className="analysis-caution">
+                  uv 缓存可能包含临时工具环境，处理前请确认关联工具。
+                </p>
+              )}
+            </div>
+            <button
+              className="button secondary"
+              aria-label={`预览${item.name}清理`}
+              disabled={disabled || expired}
+              onClick={() => {
+                if (Date.now() - scan.id <= 30 * 60 * 1000) onReview([item.id]);
+                else setTime(Date.now());
+              }}
+            >
+              预览 <ArrowRight size={13} />
+            </button>
+          </article>
+        ))}
+      </div>
       <div className="analysis-metrics">
         <button
           aria-label="查看可预览缓存"
@@ -74,45 +113,6 @@ export default function CleanupAnalysis({
           </strong>
           <small>模型、应用数据和个人文件</small>
         </button>
-      </div>
-      {expired && (
-        <p className="warning-text" role="status">
-          扫描已超过 30 分钟，请重新扫描后预览。
-        </p>
-      )}
-      {scan.cancelled && (
-        <p className="analysis-note">
-          扫描已停止，其他可处理数据可能遗漏；仅独立完整的缓存可以预览。
-        </p>
-      )}
-      <div className="analysis-candidates">
-        {analysis.available.map((item) => (
-          <article key={item.id}>
-            <div className="candidate-identity">
-              <strong>{item.name}</strong>
-              <b>{bytes(item.bytes)}</b>
-            </div>
-            <div className="candidate-impact">
-              <p>{item.impact}</p>
-              {item.id === "uv" && (
-                <p className="analysis-caution">
-                  uv 缓存可能包含临时工具环境，处理前请确认关联工具。
-                </p>
-              )}
-            </div>
-            <button
-              className="button secondary"
-              aria-label={`预览${item.name}清理`}
-              disabled={disabled || expired}
-              onClick={() => {
-                if (Date.now() - scan.id <= 30 * 60 * 1000) onReview([item.id]);
-                else setTime(Date.now());
-              }}
-            >
-              预览 <ArrowRight size={13} />
-            </button>
-          </article>
-        ))}
       </div>
       {analysis.available.length === 0 && (
         <p className="analysis-note">

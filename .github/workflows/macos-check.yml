@@ -1,0 +1,35 @@
+name: macOS 检查
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: 准备 Rust 检查工具
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: 安装锁定依赖
+        run: npm ci
+      - name: 统一检查
+        run: npm run check
+      - name: 构建原生应用
+        run: npm run tauri build
+      - name: 核验完整签名
+        run: python3 scripts/verify-macos-bundle.py src-tauri/target/release/bundle/macos/留白.app

@@ -49,6 +49,7 @@ async (page) => {
       },
       async invoke(cmd, args) {
         window.calls.push({ cmd, args });
+        if (cmd === "scan_roots") return [{ id: "root-home", name: "用户主目录", path: "/Users/fixture" }, { id: "root-shared", name: "共享用户文件", path: "/Users/Shared" }];
         if (cmd.startsWith("plugin:event|")) return 1;
         if (cmd === "disk_info") return disk;
         if (cmd === "cleanup_history")
@@ -95,6 +96,7 @@ async (page) => {
                         status: "pending",
                         permissionDenied: 0,
                         excluded: 0,
+                        diagnostics: [{ path: "/fixture/unvisited", reason: "cancelled", message: "合成停止，未访问" }],
                       },
                       blocked: "此位置未访问",
                     },
@@ -168,7 +170,7 @@ async (page) => {
         .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
         .check();
     }
-    const ack = dialog.getByRole("checkbox");
+    const ack = dialog.getByRole("checkbox", { name: "我已了解范围与权限要求，继续扫描" });
     if (await ack.count()) {
       if (!(await ack.isChecked())) await ack.check();
     }
@@ -247,6 +249,13 @@ async (page) => {
   const coverage = page.getByRole("region", { name: "本次统计不完整" });
   await coverage.getByText("目录不存在 · 1 个位置", { exact: true }).waitFor();
   await coverage.getByText("尚未访问 · 1 个位置", { exact: true }).waitFor();
+  const beforeDetails = await page.evaluate(() => window.calls.length);
+  await coverage.getByText(/查看 \d+ 个统计不完整的位置/).click();
+  const diagnostics = coverage.locator('.coverage-diagnostics');
+  await diagnostics.locator('summary').click();
+  await diagnostics.getByText('/fixture/unvisited', { exact: true }).waitFor();
+  await diagnostics.getByText('已停止', { exact: true }).waitFor();
+  if (await page.evaluate(() => window.calls.length) !== beforeDetails) throw new Error('普通扫描诊断触发额外 IPC');
   await coverage.getByText("为什么不完整？如何处理？", { exact: true }).click();
   if (await coverage.getByRole("button", { name: "检查系统访问权限" }).count())
     throw new Error("未确认权限拒绝却出现授权操作");

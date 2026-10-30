@@ -15,6 +15,7 @@ async (page) => {
       },
       async invoke(cmd, args) {
         window.calls.push({ cmd, args });
+        if (cmd === "scan_roots") return [{ id: "root-home", name: "用户主目录", path: "/Users/fixture" }, { id: "root-shared", name: "共享用户文件", path: "/Users/Shared" }];
         if (cmd.startsWith("plugin:event|")) return 1;
         if (cmd === "cleanup_history") return [];
         const disk = {
@@ -76,7 +77,7 @@ async (page) => {
     .getByRole("dialog")
     .getByText("/Users/Shared", { exact: true })
     .waitFor();
-  await page.getByRole("checkbox").check();
+  await page.getByRole("checkbox", { name: "我已了解范围与权限要求，继续扫描" }).check();
   await page
     .getByRole("button", { name: /开始(常规|扩展)扫描/, exact: true })
     .click();

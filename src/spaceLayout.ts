@@ -1,9 +1,9 @@
-import type { ProjectReport } from "./types";
+import type { Item, ProjectReport } from "./types";
 import type { Project } from "./relationships";
 
 export interface SpaceObject {
   id: string;
-  kind: "project" | "artifact" | "group";
+  kind: "project" | "artifact" | "group" | "directory" | "file";
   label: string;
   bytes: number;
   complete: boolean;
@@ -11,6 +11,7 @@ export interface SpaceObject {
   project?: Project;
   artifact?: Project["artifacts"][number];
   members?: SpaceObject[];
+  entry?: Item;
 }
 export interface SpaceRect {
   item: SpaceObject;

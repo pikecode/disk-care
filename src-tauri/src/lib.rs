@@ -1,11 +1,35 @@
 mod core;
-use core::{Disk, Engine, Listing, Plan, ProjectReport, Record, Scan};
+use core::{AiReport, AiRoot, Disk, Engine, Item, Listing, Plan, ProjectReport, Record, Scan};
 use std::{
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
 };
 use tauri::{Emitter, Manager, State};
 
+#[tauri::command]
+async fn inspect_app_residue(
+    preset: String,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::ResidueReport, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.inspect_residue(preset))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn reveal_residue_candidate(
+    report_id: u64,
+    candidate_id: usize,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<(), String> {
+    let path = engine.residue_path(report_id, candidate_id)?;
+    std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 #[tauri::command]
 fn disk_info(engine: State<'_, Arc<Engine>>) -> Result<Disk, String> {
     engine.disk()
@@ -15,14 +39,19 @@ fn cancel_scan(engine: State<'_, Arc<Engine>>) {
     engine.cancel.store(true, Ordering::SeqCst);
 }
 #[tauri::command]
+fn scan_roots(engine: State<'_, Arc<Engine>>) -> Vec<Item> {
+    engine.scan_roots()
+}
+#[tauri::command]
 async fn scan_disk(
     extended: Option<bool>,
+    root_ids: Option<Vec<String>>,
     app: tauri::AppHandle,
     engine: State<'_, Arc<Engine>>,
 ) -> Result<Scan, String> {
     let engine = engine.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        engine.scan(extended.unwrap_or(false), |p| {
+        engine.scan(extended.unwrap_or(false), root_ids, |p| {
             let _ = app.emit("scan-progress", p);
         })
     })
@@ -86,6 +115,31 @@ fn cleanup_history(engine: State<'_, Arc<Engine>>) -> Result<Vec<Record>, String
 }
 
 #[tauri::command]
+async fn reveal_observed_file(
+    id: String,
+    relative: String,
+    measured_at: u64,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<(), String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = engine.observed_file(&id, &relative, measured_at)?;
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(path)
+            .status()
+            .map_err(|e| format!("无法在 Finder 中定位：{e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("Finder 定位失败，请重新打开目录后重试".into())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn scan_projects(
     root: String,
     app: tauri::AppHandle,
@@ -99,6 +153,17 @@ async fn scan_projects(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn analyze_ai_data(
+    roots: Vec<AiRoot>,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Vec<AiReport>, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.ai_data(roots))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -171,14 +236,19 @@ pub fn run() {
             open_privacy_settings,
             reveal_current_app,
             disk_info,
+            inspect_app_residue,
+            reveal_residue_candidate,
             scan_disk,
+            scan_roots,
             cancel_scan,
             list_children,
+            reveal_observed_file,
             prepare_cleanup,
             execute_cleanup,
             cleanup_history,
             protect_uv_cache,
-            scan_projects
+            scan_projects,
+            analyze_ai_data
         ])
         .build(tauri::generate_context!())
         .expect("应用启动失败")

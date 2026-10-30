@@ -5,6 +5,7 @@ export interface Disk {
   shared: number;
 }
 export interface Coverage {
+  diagnostics?: { path: string; reason: string; message: string }[];
   status:
     | "complete"
     | "absent"
@@ -43,7 +44,11 @@ export interface Item {
   coverage?: Coverage | null;
   evidence?: RuleEvidence | null;
 }
+export interface ScanTiming {
+  id: string; name: string; durationMs: number | null;
+}
 export interface Scan {
+  timings?: ScanTiming[];
   extended?: boolean;
   id: number;
   disk: Disk;
@@ -91,6 +96,19 @@ export interface Listing {
   measuredAt: number;
   complete: boolean;
   issues: number;
+  coverage?: Coverage;
+  mapItems?: Item[];
+  otherBytes?: number;
+  otherCount?: number;
+  largeFiles?: LargeFile[];
+  largeFilesTotal?: number;
+}
+export interface LargeFile {
+  path: string;
+  relative: string;
+  logicalBytes: number;
+  allocatedBytes: number;
+  modifiedAt: number | null;
 }
 
 export interface ProjectReport {
@@ -153,4 +171,45 @@ export interface ModelStorageReport {
     externalLinks: boolean;
   }[];
   issues: { kind: string; path: string; message: string }[];
+}
+
+export interface AiRoot {
+  tool: "codex" | "claude";
+  path: string;
+}
+export interface AiItem {
+  group: string;
+  category: string;
+  policy: "protected" | "review" | "unknown";
+  ruleId: string;
+  ruleVersion: number;
+  evidence: string;
+  impact: string;
+  logicalBytes: number;
+  allocatedBytes: number;
+  files: number;
+  modifiedAt: number | null;
+  cleanupEligible: false;
+}
+export interface AiReport {
+  tool: string;
+  root: string;
+  source: string;
+  measuredAt: number;
+  coverage: Coverage;
+  issues: number;
+  notes: string[];
+  version: string;
+  activity: string;
+  logicalBytes: number | null;
+  allocatedBytes: number | null;
+  items: AiItem[];
+}
+
+export interface ResidueReport {
+  id: number; measuredAt: number;
+  sources: { name: string; path: string; coverage: Coverage; candidates: {
+    id: number; path: string; category: string; evidence: string;
+    allocatedBytes: number; logicalBytes: number; cleanupEligible: false;
+  }[] }[];
 }

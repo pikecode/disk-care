@@ -51,3 +51,30 @@ output/cleanmymac-re/knowledge-base/database-read-probe \
 ```
 
 探针只写新 UUID 目录中的自有样本；包内两个资源先复制，再只读打开。UPDATE 拒绝测试只针对自建数据库。探针未执行真实知识库匹配对象，无密钥失败不等于已恢复任何真实规则。批次导出会更新同名输出，保留原始证据时应另存；不要对已有同名项目重复 import。FindKnowledgeStrings.java 的脚本参数为输出 JSON 路径，仅遍历已定义字符串，空引用不证明未使用。
+
+## 2026-10-21 节点与清理器绑定
+
+见 [绑定报告](../../../docs/cleanmymac-cleaner-binding-re.md)。本轮没有执行目标清理类或真实清理，新增 7 项测试仅验证研究工具。
+
+- `run_binding_analysis.py`：复用前两轮已有的 JunkCleanupModule／CleaningCore Ghidra 项目，始终使用 `-noanalysis`；输出仅放在独立 cleaner-binding 目录，拒绝覆盖已有证据。环境只传入基础系统变量。项目／工具不随 Git 上传，全新克隆后不能直接运行，需要先按前两轮报告准备固定版本输入和项目。
+- `BindingReferences.java`：最多跟进 3 层、每符号最多 300 条引用，保留 DATA／调用类型。本目标的相关导入名字未被 Ghidra 恢复，它只找到 27 个元数据符号；不能据此认定未调用清理构造器。
+- `map_arm64_stubs.py`：输入 arm64 小端切片、系统 dyld_info 懒绑定文本和 otool 文本，解析 ADRP／LDR／BR 三指令桩、指针槽与初始目标，连接静态 bl 调用；只支持当前标准 12 字节布局，遇到其他布局拒绝。指针槽与初始懒绑定目标是不同地址，必须分开记录。
+- `test_stub_mapping.py`：独立最小 Mach-O 的正／负偏移、错误指令／架构／截断／越界等 7 项断言；不加载目标框架。
+
+```sh
+python3 scripts/research/cleanmymac/test_stub_mapping.py
+python3 scripts/research/cleanmymac/run_binding_analysis.py \
+  JunkCleanupModule functions-user-cache-check DumpFunctions.java 0x56dfc 0x5d390
+xcrun dyld_info -arch arm64 -fixups \
+  /Applications/CleanMyMac_5.app/Contents/Frameworks/JunkCleanupModule.framework/Versions/A/JunkCleanupModule \
+  > output/cleanmymac-re/cleaner-binding/junk-fixups-check.txt
+xcrun swift-demangle < output/cleanmymac-re/cleaner-binding/junk-fixups-check.txt \
+  > output/cleanmymac-re/cleaner-binding/junk-fixups-check-demangled.txt
+python3 scripts/research/cleanmymac/map_arm64_stubs.py \
+  output/cleanmymac-re/knowledge-base/JunkCleanupModule.arm64 \
+  output/cleanmymac-re/cleaner-binding/junk-fixups-check-demangled.txt \
+  output/cleanmymac-re/cleaner-binding/junk-disassembly.txt \
+  output/cleanmymac-re/cleaner-binding/junk-stubs-check.json
+```
+
+LLVM 交叉核对使用 `xcrun llvm-objdump -d --section=__stubs`。两模块共 849 个桩的指针槽地址一致；懒绑定筛选不覆盖各模块两个普通 GOT 的 C++ new／delete，不把缺失项填成猜测名称。输出文件可能包含目标伪代码和本机路径，继续由 output 忽略规则排除。

@@ -113,3 +113,5 @@ flowchart TD
 本地 output 可能被清理，主要结论保存在本文；可复用的自有研究脚本放入 scripts/research/cleanmymac，不加入产品执行链。关联：[本轮计划](plans/2026-10-20-cleanmymac-system-junk.md)、[修改记录](change-log.md#change-20261020-006)。
 
 2026-10-21 续篇：[缓存知识库执行链](cleanmymac-knowledge-base-re.md) 已定位真实查询实现并完成 FMDB 读取对照；真实规则内容仍未读出，不替代本文的历史验证边界。
+
+2026-10-21 后续：[节点到清理器绑定](cleanmymac-cleaner-binding-re.md) 已补缓存节点、路径解析及移除器组合的静态连接；没有执行真实清理类，不把此轮成果替代本报告当时的缺口。
