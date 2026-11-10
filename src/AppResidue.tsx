@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { AppWindow, Search, RefreshCw, ShieldCheck, FolderSearch, LoaderCircle } from "lucide-react";
+import { AppWindow, Search, RefreshCw, ShieldCheck, FolderSearch, LoaderCircle, ChevronRight, Trash2 } from "lucide-react";
 import type { AppCatalog, ResidueReport, UninstallPreview, UninstallResult, UninstallRecord, AppUsage } from "./types";
 import { api } from "./api";
+import { Menu } from "@tauri-apps/api/menu";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { bytes } from "./format";
 import { compareAssociation, matchesAppReport, applicationGroups, visibleApplications, visibleSources, attentionSource, type AppGroup } from "./appAssociation";
 import AppIcon from "./AppIcon";
@@ -19,8 +21,12 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
   const [historyError, setHistoryError] = useState("");
   const readHistory = () => { if (desktop) void api.uninstallHistory().then(records => { setHistory(records); setHistoryError(""); }).catch(e => setHistoryError(String(e))); };
   useEffect(() => { if (active) readHistory(); }, [active, desktop]);
+  const contextMenu = useRef<Menu | null>(null);
+  const openingMenu = useRef(false);
+  useEffect(() => () => { void contextMenu.current?.close().catch(() => {}); }, []);
   const scope = useRef<HTMLElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  const appList = useRef<HTMLUListElement>(null);
   const selectedButton = useRef<HTMLButtonElement | null>(null);
   const uninstallDialog = useRef<HTMLDialogElement>(null);
   const uninstallCancel = useRef<HTMLButtonElement>(null);
@@ -57,6 +63,9 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
   const [appPath, setAppPath] = useState("");
   const [bundleId, setBundleId] = useState("");
   const [special, setSpecial] = useState(false);
+  useEffect(() => {
+    if (!query && active) appList.current?.querySelector<HTMLButtonElement>('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [query, appPath, active]);
   const report = matchesAppReport(savedReport, bundleId, appPath, special) ? savedReport : null;
   useEffect(() => setSourceFilter("all"), [report]);
   const valid = bundleId.length <= 200 && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundleId);
@@ -81,7 +90,26 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
     selectedButton.current = button;
     setUsage(null); setUsageError(""); setError(""); setUninstallError(null); setUninstalled(null);
     setComparisonRecord(null); setAppPath(app.path); setBundleId(app.bundleId); setSpecial(false); setAck(false);
-    requestAnimationFrame(() => scope.current?.focus({ preventScroll: true }));
+    requestAnimationFrame(() => {
+      scope.current?.parentElement?.scrollTo({ top: 0 });
+      scope.current?.focus({ preventScroll: true });
+    });
+  }
+  async function showAppMenu(app: AppCatalog["apps"][number], button: HTMLButtonElement, position: LogicalPosition) {
+    if (!desktop || busy || locating || uninstallWorking || openingMenu.current) return;
+    openingMenu.current = true;
+    selectApp(app, button);
+    try {
+      await contextMenu.current?.close();
+      contextMenu.current = await Menu.new({ items: [
+        { text: "查看详情", action: () => selectApp(app, button) },
+        { text: "检查关联文件", action: () => onInspect(app.bundleId, app.path) },
+        { item: "Separator" },
+        { text: "卸载…", enabled: !groups.protectedApp(app.bundleId), action: () => { void previewUninstall(app.path, app.bundleId); } },
+      ] });
+      await contextMenu.current.popup(position);
+    } catch (e) { setError(`无法打开应用菜单：${String(e)}`); }
+    finally { openingMenu.current = false; }
   }
   async function previewUninstall(path = appPath, id = bundleId) {
     setUninstallPlan(null); setError(""); setUninstallError(null); setUninstallAck(false); setUninstallWorking(true);
@@ -108,14 +136,15 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
   return <section className="residue-workspace" aria-label="应用管理" onKeyDown={event => {
     if (active && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && !uninstallPlan) { event.preventDefault(); search.current?.focus(); }
   }}>
+    <header className="residue-toolbar" data-tauri-drag-region>
+      <div className="residue-window-title" data-tauri-drag-region><h1 data-tauri-drag-region>应用</h1><span>{catalog ? `${catalog.apps.length} 个应用` : "本机应用目录"}</span></div>
+      <div className="residue-search"><Search size={15} aria-hidden="true" /><input ref={search} aria-label="搜索应用" placeholder="搜索应用 ⌘F" value={query} disabled={!catalog} onChange={e => setQuery(e.target.value)} /></div>
+      <button className="residue-refresh" aria-label="读取应用列表" title="刷新应用列表" disabled={!desktop || busy || loadingApps} onClick={readApps}><RefreshCw size={16} className={loadingApps ? "spin" : ""} /></button>
+    </header>
     <div className="residue-browser">
-      <header className="residue-toolbar"><div><h2>应用</h2><span>{catalog ? `${catalog.apps.length} 个应用副本` : "本机应用目录"}</span></div>
-        <button className="residue-refresh" aria-label="读取应用列表" title="刷新应用列表" disabled={!desktop || busy || loadingApps} onClick={readApps}><RefreshCw size={16} className={loadingApps ? "spin" : ""} /></button>
-      </header>
-      <div className="residue-search"><Search size={15} aria-hidden="true" /><input ref={search} aria-label="搜索应用" placeholder="搜索应用" value={query} disabled={!catalog} onChange={e => setQuery(e.target.value)} /></div>
-      {catalog && <div className="residue-list-tools"><div role="group" aria-label="应用分组">{([["all","全部"],["copies","多个副本"],["protected","受保护"]] as const).map(([value,label]) => <button key={value} aria-pressed={group === value} onClick={() => setGroup(value)}>{label}</button>)}</div><label>排序<select aria-label="应用排序" value={descending ? "desc" : "asc"} onChange={e => setDescending(e.target.value === "desc")}><option value="asc">名称 A → Z</option><option value="desc">名称 Z → A</option></select></label><p>显示 {apps.length} / {catalog.apps.length} 个副本{group === "copies" ? " · 仅按已发现的相同标识分组，不代表内容相同或可删除" : group === "protected" ? " · 标识保护策略，不等于签名鉴定" : ""}</p></div>}
+      {catalog && <div className="residue-list-tools"><div role="group" aria-label="应用分组">{([["all","全部"],["copies","多个副本"],["protected","受保护"]] as const).map(([value,label]) => <button key={value} aria-pressed={group === value} onClick={() => setGroup(value)}>{label}</button>)}</div><label>排序<select aria-label="应用排序" value={descending ? "desc" : "asc"} onChange={e => setDescending(e.target.value === "desc")}><option value="asc">名称 A → Z</option><option value="desc">名称 Z → A</option></select></label>{(query || group !== "all") && <p>显示 {apps.length} / {catalog.apps.length} 个副本{group === "copies" ? " · 仅按已发现的相同标识分组，不代表内容相同或可删除" : group === "protected" ? " · 标识保护策略，不等于签名鉴定" : ""}</p>}</div>}
       {loadingApps ? <div className="residue-empty" role="status"><LoaderCircle size={28} className="spin" /><h3>正在读取应用</h3><p>读取名称与应用标识，不读取个人配置。</p><button className="text-button" onClick={onCancel}>停止读取应用列表</button></div> : catalog ? <>
-        <ul className="residue-app-list" aria-label="可检查的应用" onKeyDown={event => {
+        <ul ref={appList} className="residue-app-list" aria-label="可检查的应用" onKeyDown={event => {
           if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
           const selector = (document.activeElement as HTMLElement)?.classList.contains("residue-row-uninstall") ? ".residue-row-uninstall:not(:disabled)" : ".residue-check:not(.residue-row-uninstall):not(:disabled)";
           const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(selector));
@@ -125,10 +154,17 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
           const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : Math.max(0, Math.min(buttons.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
           buttons[next]?.focus();
         }}>{apps.map(app => <li key={app.path} className={appPath === app.path ? "selected" : ""}>
-          <AppIcon path={app.path} bundleId={app.bundleId} name={app.name} active={active && desktop} />
-          <div title={`${app.name}\n${app.bundleId}\n${app.path}`}><strong>{app.name}</strong>{groups.protectedApp(app.bundleId) && <small className="residue-copy-tag">受保护</small>}{(groups.copies.get(app.bundleId) ?? 0) > 1 && <small className="residue-copy-tag">已发现 {groups.copies.get(app.bundleId)} 个副本</small>}<span>{app.version ? `版本 ${app.version}` : ""}</span></div>
-          <button className="residue-check" aria-label={`查看 ${app.name}`} aria-current={appPath === app.path ? "true" : undefined} disabled={busy || locating || uninstallWorking} onClick={event => selectApp(app, event.currentTarget)}>查看</button>
-          <button className="residue-check residue-row-uninstall" aria-label={`卸载 ${app.name}`} title={groups.protectedApp(app.bundleId) ? "系统应用与留白自身受到保护" : "预览卸载范围，确认后才移到废纸篓"} disabled={!desktop || busy || locating || uninstallWorking || groups.protectedApp(app.bundleId)} onClick={event => { selectApp(app, event.currentTarget); void previewUninstall(app.path, app.bundleId); }}>卸载…</button>
+          <button className="residue-check residue-select" aria-label={`查看 ${app.name}`} title={`${app.name}\n${app.bundleId}\n${app.path}`} aria-current={appPath === app.path ? "true" : undefined} disabled={busy || locating || uninstallWorking} onClick={event => selectApp(app, event.currentTarget)} onContextMenu={event => { event.preventDefault(); void showAppMenu(app, event.currentTarget, new LogicalPosition(event.clientX, event.clientY)); }} onKeyDown={event => {
+            if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+              event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect();
+              void showAppMenu(app, event.currentTarget, new LogicalPosition(rect.left + 20, rect.bottom));
+            }
+          }}>
+            <AppIcon path={app.path} bundleId={app.bundleId} name={app.name} active={active && desktop} />
+            <span className="residue-app-meta"><strong>{app.name}</strong>{(app.version || groups.protectedApp(app.bundleId) || (groups.copies.get(app.bundleId) ?? 0) > 1) && <span className="residue-app-secondary">{app.version && <span>版本 {app.version}</span>}{groups.protectedApp(app.bundleId) && <small className="residue-copy-tag">受保护</small>}{(groups.copies.get(app.bundleId) ?? 0) > 1 && <small className="residue-copy-tag">{groups.copies.get(app.bundleId)} 个副本</small>}</span>}</span>
+            <ChevronRight size={14} className="residue-row-chevron" aria-hidden="true" />
+          </button>
+          <button className="residue-icon-action residue-row-uninstall" aria-label={`卸载 ${app.name}`} title={groups.protectedApp(app.bundleId) ? "系统应用与留白自身受到保护" : "预览卸载范围，确认后才移到废纸篓"} disabled={!desktop || busy || locating || uninstallWorking || groups.protectedApp(app.bundleId)} onClick={event => { selectApp(app, event.currentTarget); void previewUninstall(app.path, app.bundleId); }}><Trash2 size={15} aria-hidden="true" /></button>
         </li>)}</ul>
         {!apps.length && <div className="residue-empty"><Search size={28} /><h3>{catalog.apps.length ? "未找到应用" : "未发现应用"}</h3><p>{catalog.apps.length ? "没有匹配的应用，试试其他名称或分组。" : "可查看读取详情，或使用手动检查。"}</p></div>}
         <details className="residue-catalog-details"><summary>{labels[catalog.coverage.status] ?? "覆盖未知"} · 读取详情</summary><p>仅列出常规应用目录及一层分类。未列出不代表已卸载。</p><CoverageDiagnostics coverage={catalog.coverage} /><p><code>/Applications</code><br /><code>~/Applications</code></p></details>
@@ -141,22 +177,21 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
     <div className="residue-inspector">
 
       {uninstalled && <div className="residue-uninstalled" role="status"><strong>{uninstalled.name} 已移到废纸篓</strong><code className="ai-path">原位置：{uninstalled.path}</code>{uninstalled.warning && <p role="alert">{uninstalled.warning}</p>}<p>关联数据已保留，应用移入废纸篓不会立即释放空间。</p><details><summary>如何恢复应用？</summary><p>打开 Finder 的废纸篓，找到应用并选择“放回原处”。若已清空废纸篓，需要重新安装。</p>{uninstalled.trashPath && <code className="ai-path">移入位置：{uninstalled.trashPath}</code>}</details><button className="text-button" disabled={busy || loadingApps || uninstallWorking} onClick={() => { setComparisonRecord({at:uninstalled.at ?? Date.now(), name:uninstalled.name,path:uninstalled.path,bundleId:uninstalled.bundleId,success:true,message:"应用包已移到废纸篓",before:uninstalled.before}); setAppPath(""); setBundleId(uninstalled.bundleId); setSpecial(false); setAck(false); scope.current?.focus({ preventScroll: true }); }}>检查该应用的关联文件</button></div>}
-      {!valid && !special && <div className="residue-welcome"><span className="residue-welcome-icon"><FolderSearch size={40} strokeWidth={1.25} /></span><h2>检查应用关联文件</h2><p>在左侧找到应用，点击“查看”。<br />关联数据、用途与检查结果会在这里展示。</p><span className="residue-readonly"><ShieldCheck size={14} />只读检查 · 不会删除文件</span></div>}
-      {(valid || special) && <section className="residue-scope" ref={scope} tabIndex={-1} aria-label="应用详情" onKeyDown={event => {
+      {!valid && !special && <div className="residue-welcome"><span className="residue-welcome-icon"><FolderSearch size={32} strokeWidth={1.4} /></span><h2>检查应用关联文件</h2><p>在左侧找到应用，点击“查看”。<br />关联数据、用途与检查结果会在这里展示。</p><span className="residue-readonly"><ShieldCheck size={14} />只读检查 · 不会删除文件</span></div>}
+      {(valid || special) && <section className="residue-scope" ref={scope} tabIndex={-1} aria-label="应用详情" aria-description="按 Esc 返回应用列表" onKeyDown={event => {
         if (event.key !== "Escape" || busy || loadingApps || uninstallPlan) return;
         event.preventDefault(); event.stopPropagation();
         if (selectedButton.current?.isConnected && !selectedButton.current.disabled) selectedButton.current.focus();
         else search.current?.focus();
       }}>
       <header className="residue-detail-heading"><AppIcon path={appPath || undefined} bundleId={bundleId} name={selectedName} active={active && desktop} /><div><span className="residue-kicker">{appPath ? "已选择应用" : "手动检查"}</span><h2>{selectedName}</h2></div></header>
-      <p className="residue-key-hint">Esc 返回应用列表</p>
-      <code className="ai-path">{appPath || (special ? "历史样例路径" : bundleId)}</code>
+      {appPath ? <details className="residue-location"><summary>应用位置与标识</summary><code className="ai-path">{appPath}</code><code className="ai-path">{bundleId}</code></details> : <code className="ai-path">{special ? "历史样例路径" : bundleId}</code>}
       {savedReport && !report && (valid || special) && <p className="residue-report-note" role="status">当前目标没有匹配的检查报告。上次报告已保留，切回原目标后可查看匹配结果。</p>}
       {comparisonRecord && <p className="residue-association-note">已选择 {comparisonRecord.name} 的卸载记录。{comparisonRecord.before ? "主动检查后可对照卸载前观测。" : "没有卸载前观测，本次仅显示当前关联项。"}历史不证明当前没有其他安装副本。</p>}
       <div className="residue-section-heading"><h3>检查范围</h3><span className="residue-readonly"><ShieldCheck size={13} />只读</span></div>
       <p>查看缓存、应用数据与设置等关联文件，只检查，不删除。</p>
       {!appPath && <label><input type="checkbox" checked={ack} disabled={busy} onChange={e => setAck(e.target.checked)} />我已了解检查来源与敏感范围</label>}
-      <div className="ai-report-controls">{scanning ? <button className="button secondary" onClick={onCancel}>停止关联检查</button> : <button className="button primary" aria-label="检查关联文件" disabled={!desktop || busy || loadingApps || uninstallWorking || (!appPath && !ack) || locating || (!special && !valid)} onClick={() => { setError(""); onInspect(special ? null : bundleId, appPath || undefined); }}>检查关联文件</button>}{appPath && <button className="text-button" disabled={!desktop || busy || loadingApps || locating || uninstallWorking || groups.protectedApp(bundleId)} onClick={() => void previewUninstall()}>{uninstallWorking ? "正在准备卸载…" : "卸载此应用…"}</button>}</div>
+      <div className="ai-report-controls">{scanning ? <button className="button secondary" onClick={onCancel}>停止关联检查</button> : <button className="button primary" aria-label="检查关联文件" disabled={!desktop || busy || loadingApps || uninstallWorking || (!appPath && !ack) || locating || (!special && !valid)} onClick={() => { setError(""); onInspect(special ? null : bundleId, appPath || undefined); }}><FolderSearch size={15} aria-hidden="true" />检查关联文件</button>}{appPath && <button className="text-button residue-uninstall-action" disabled={!desktop || busy || loadingApps || locating || uninstallWorking || groups.protectedApp(bundleId)} onClick={() => void previewUninstall()}>{uninstallWorking ? "正在准备卸载…" : "卸载此应用…"}</button>}</div>
       <details className="residue-technical"><summary>查看检查位置与说明</summary>
       <div className="residue-source-preview">{(special ? [["配置目录", "CC Switch 配置元数据"], ["安装包", "下载目录第一层名称线索"], ["崩溃记录", "CrashReporter 第一层名称线索"]] : [["应用缓存", "可重建性与独占性未验证"], ["应用数据", "可能包含个人资料，默认保留"], ["偏好设置", "可能包含敏感配置，默认保留"], ["应用日志", "排障记录可能含敏感信息，默认保留"], ["保存状态", "窗口与会话恢复资料，默认保护"]]).map(([name, note]) => <div key={name}><span>{name}</span><small>{note}</small></div>)}</div>
       {special ? <ul><li>~/.cc-switch</li><li>~/Downloads（仅第一层）</li><li>~/Library/Application Support/CrashReporter（仅第一层）</li></ul> : <ul><li>~/Library/Caches/{bundleId}</li><li>~/Library/Application Support/{bundleId}</li><li>~/Library/Preferences/{bundleId}.plist</li><li>~/Library/Logs/{bundleId}</li><li>~/Library/Saved Application State/{bundleId}.savedState</li></ul>}

@@ -550,73 +550,22 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Layers3 size={24} strokeWidth={1.5} />
-          </span>
-          <div>
-            <strong>留白</strong>
-            <span>DISK CARE</span>
-          </div>
-        </div>
-        <div className="workspace-label">本机工作空间</div>
+        <div className="window-sidebar-title" data-tauri-drag-region>留白</div>
         <nav aria-label="主导航">
           <button className={view === "overview" ? "nav active" : "nav"} aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}><Sparkles size={18} />清理</button>
           <button className={isSpace ? "nav active" : "nav"} aria-current={isSpace ? "page" : undefined} onClick={() => setView("space")}><HardDrive size={18} />空间</button>
           <button className={view === "residue" ? "nav active" : "nav"} aria-current={view === "residue" ? "page" : undefined} onClick={() => setView("residue")}><Package size={18} />应用</button>
         </nav>
         <button className={`nav history-entry${view === "history" ? " active" : ""}`} aria-current={view === "history" ? "page" : undefined} onClick={() => setView("history")}><History size={17} />清理记录<span className="nav-count">{history.length}</span></button>
-        <div className="sidebar-note">
-          <ShieldCheck size={21} />
-          <div className="local-dot">
-            <i />
-            数据留在本机
-          </div>
-        </div>
+        <div className="sidebar-note"><ShieldCheck size={14} /><span>数据留在本机</span></div>
         <div className="sidebar-footer">
-          <span>macOS · 版本 {appVersion}</span>
-          <span className="edition">本地版</span>
+          <span>版本 {appVersion}</span>
+          <span className="edition">macOS</span>
         </div>
       </aside>
-      <main>
-        <header className="topbar">
-          <span>
-            工作空间 <ChevronRight size={13} />{" "}
-            {isSpace && view !== "space" ? `空间 / ${pageTitle}` : pageTitle}
-          </span>
-          <div>
-            <span className="tiny-dot" />
-            {desktop ? "已连接本机" : "浏览器预览"}
-          </div>
-        </header>
-        <div className="page-content">
-          {!desktop && (
-            <div className="preview-banner">
-              <CircleHelp size={17} />
-              <span>
-                {preview
-                  ? "当前展示示例数据，无法执行清理。真实扫描请打开桌面应用。"
-                  : "这是浏览器界面，扫描与清理仅在桌面应用中可用。"}
-              </span>
-              {!preview && (
-                <button onClick={showPreview}>
-                  查看示例 <ArrowRight size={14} />
-                </button>
-              )}
-            </div>
-          )}
-          <div className="page-heading">
-            <div>
-              <h1>{pageTitle}</h1>
-              <p>
-                {view === "overview"
-                  ? "检查缓存，再选择需要清理的内容。"
-                  : view === "space" ? "找到空间用在哪里，再决定如何处理。"
-                  : view === "projects"
-                    ? "查看项目的构建文件和依赖占用。"
-                    : view === "developer" ? "查看哪些开发工具占用了空间。" : view === "ai" ? "查看 AI 工具的数据占用，识别需要保留的资料。" : view === "residue" ? "查找应用占用，检查关联文件或卸载应用。" : "查看执行结果与磁盘可用空间变化，最多保留最近 100 次。"}
-              </p>
-            </div>
+      <main className={`${view === "overview" && selectedItems.length > 0 ? "has-actionbar" : ""} ${view === "residue" ? "application-window" : ""}`}>
+        {view !== "residue" && <header className="topbar" data-tauri-drag-region>
+          <h1 data-tauri-drag-region>{pageTitle}</h1>
             {view === "overview" && (
               <button
                 className="button primary"
@@ -635,7 +584,23 @@ export default function App() {
                     : "开始检查"}
               </button>
             )}
-          </div>
+        </header>}
+        <div className="page-content">
+          {!desktop && (
+            <div className="preview-banner">
+              <CircleHelp size={17} />
+              <span>
+                {preview
+                  ? "当前展示示例数据，无法执行清理。真实扫描请打开桌面应用。"
+                  : "这是浏览器界面，扫描与清理仅在桌面应用中可用。"}
+              </span>
+              {!preview && (
+                <button onClick={showPreview}>
+                  查看示例 <ArrowRight size={14} />
+                </button>
+              )}
+            </div>
+          )}
           {view === "overview" && scan && (
             <ol className="workflow-steps" aria-label="操作步骤">
               {["扫描空间", "查看结果", "确认清理"].map((label, index) => {
@@ -728,7 +693,7 @@ export default function App() {
               reports={aiReports} baselines={aiBaselines} onBaseline={(report) => setAiBaselines((previous) => [...previous.filter((b) => b.tool !== report.tool || b.root !== report.root), report])} onAnalyze={(roots) => void analyzeAi(roots)}
               onCancel={() => void api.cancel().catch((e) => setError(errorMessage(e)))} />
           </div>
-          <div hidden={view !== "residue"}><AppResidue onUsage={inspectAppUsage} active={view === "residue"} onPrepareUninstall={prepareUninstall} onExecuteUninstall={executeUninstall} desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={(bundleId, appPath) => void inspectResidue(bundleId, appPath)} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
+          <div className="application-host" hidden={view !== "residue"}><AppResidue onUsage={inspectAppUsage} active={view === "residue"} onPrepareUninstall={prepareUninstall} onExecuteUninstall={executeUninstall} desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={(bundleId, appPath) => void inspectResidue(bundleId, appPath)} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
           <div hidden={view !== "history"}><CleanupHistory records={history} loading={historyLoading} error={historyError} disabled={!desktop || busy || browsing} onRefresh={() => void readCleanupHistory()} onReview={() => setView("overview")} onRescan={() => { setView("overview"); startScan("history"); }} /></div>
           {view === "overview" ? (
             <>

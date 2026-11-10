@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
-  "description": "主窗口仅使用事件接口；文件与清理均经 Rust 固定规则校验。",
-  "windows": ["main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "description": "主窗口使用事件、窗口拖动及应用上下文菜单；文件与清理仍经 Rust 固定规则校验。",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:menu:allow-new",
+    "core:menu:allow-popup",
+    "core:resources:allow-close"
+  ]
 }

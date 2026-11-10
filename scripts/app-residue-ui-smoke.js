@@ -8,6 +8,8 @@ async (page) => {
     window.__TAURI_INTERNALS__ = { transformCallback() { return 1; }, async invoke(cmd, args) {
       window.calls.push({cmd,args});
       if (cmd.startsWith('plugin:event|')) return 1;
+      if (cmd === 'plugin:menu|new') { window.menuItems=args.options.items; return [901,'fixture-menu']; }
+      if (cmd === 'plugin:menu|popup' || cmd === 'plugin:resources|close') return;
       if (cmd === 'disk_info') return {total:100,available:50,used:50,shared:0};
       if (cmd === 'app_icon') return null;
       if (cmd === 'cleanup_history') return [];
@@ -83,6 +85,12 @@ async (page) => {
   await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='应用详情');
   await page.getByRole('textbox',{name:'搜索应用'}).fill('');
+  await page.waitForFunction(()=>{
+    const selected=document.querySelector('.residue-app-list [aria-current="true"]');
+    if(!selected)return false;
+    const row=selected.getBoundingClientRect(),list=selected.closest('ul').getBoundingClientRect();
+    return row.top>=list.top-1&&row.bottom<=list.bottom+1;
+  });
   await page.screenshot({path:'output/playwright/app-workspace-detail.png',fullPage:true});
   await page.setViewportSize({width:1280,height:900});
   await page.screenshot({path:'output/playwright/app-workspace-desktop.png',fullPage:true});
@@ -116,8 +124,10 @@ async (page) => {
   if(await page.evaluate(()=>window.calls.find(c=>c.cmd==='inspect_app_residue').args.appPath) !== '/Applications/Example.app') throw new Error('未传递选中应用包');
   if(await page.evaluate(()=>window.calls.find(c=>c.cmd==='inspect_app_residue').args.bundleId) !== 'org.example.installed') throw new Error('未绑定已确认标识');
   const inspectedBeforeSwitch=await page.evaluate(()=>window.calls.filter(c=>c.cmd==='inspect_app_residue').length);
+  await page.locator('.residue-inspector').evaluate(el=>{el.scrollTop=el.scrollHeight;});
   await page.getByRole('button',{name:'查看 另一安装副本',exact:true}).click();
   if(await page.locator('.residue-results').count()) throw new Error('不同副本显示旧报告');
+  await page.waitForFunction(()=>document.querySelector('.residue-inspector').scrollTop===0);
   await page.getByText('当前目标没有匹配的检查报告。上次报告已保留，切回原目标后可查看匹配结果。',{exact:true}).waitFor();
   if(await page.evaluate(()=>window.calls.filter(c=>c.cmd==='inspect_app_residue').length)!==inspectedBeforeSwitch) throw new Error('切换副本自动检查');
   await page.getByRole('button',{name:'查看 示例应用',exact:true}).click();
@@ -159,6 +169,26 @@ async (page) => {
   await page.getByRole('status').getByText('正在读取应用').waitFor();
   await page.getByRole('button',{name:'停止读取应用列表'}).click();
   await page.getByRole('heading',{name:'未发现应用',exact:true}).waitFor();
+  await page.evaluate(()=>{window.catalogMode='complete';window.mode='complete';});
+  await page.getByRole('button',{name:'读取应用列表',exact:true}).click();
+  const menuRow=page.getByRole('button',{name:'查看 示例应用',exact:true});
+  const beforeMenu=await page.evaluate(()=>window.calls.filter(c=>c.cmd==='inspect_app_residue').length);
+  await menuRow.click({button:'right'});
+  await page.waitForFunction(()=>window.calls.some(c=>c.cmd==='plugin:menu|popup'));
+  if(await page.evaluate(()=>window.calls.filter(c=>c.cmd==='inspect_app_residue').length)!==beforeMenu) throw new Error('右键自动检查');
+  if(await page.evaluate(()=>window.menuItems.map(i=>i.text||i.item).join('|'))!=='查看详情|检查关联文件|Separator|卸载…') throw new Error('原生菜单结构不完整');
+  await page.evaluate(()=>window.menuItems[1].handler.onmessage());
+  await page.waitForFunction(n=>window.calls.filter(c=>c.cmd==='inspect_app_residue').length===n+1,beforeMenu);
+  const menuTarget=await page.evaluate(()=>window.calls.filter(c=>c.cmd==='inspect_app_residue').at(-1).args);
+  if(menuTarget.appPath!=='/Applications/Example.app'||menuTarget.bundleId!=='org.example.installed') throw new Error('菜单检查目标错误');
+  const protectedRow=page.getByRole('button',{name:'查看 保护策略样例',exact:true});
+  await protectedRow.focus();await page.keyboard.press('Shift+F10');
+  await page.waitForFunction(()=>window.menuItems.at(-1).enabled===false);
+  if(await page.evaluate(()=>window.calls.some(c=>/prepare_app_uninstall|execute_app_uninstall/.test(c.cmd)))) throw new Error('打开菜单触发卸载');
+  if(await page.evaluate(()=>window.calls.filter(c=>c.cmd==='plugin:resources|close').length)<1) throw new Error('旧菜单资源未释放');
+  const shellBounds=await page.locator('.residue-workspace').boundingBox();
+  if(!shellBounds||Math.abs(shellBounds.y)>1||Math.abs(shellBounds.height-660)>1) throw new Error('应用工作区未占满窗口');
+  if(await page.evaluate(()=>document.scrollingElement.scrollHeight>innerHeight)) throw new Error('桌面窗口整体滚动');
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)) throw new Error('窄窗口溢出');
   if(await page.evaluate(()=>window.calls.some(c=>/execute_cleanup|prepare_cleanup|mount|kill/.test(c.cmd)))) throw new Error('只读流程触发写入');
   if(errors.length) throw new Error(errors.join('\n'));

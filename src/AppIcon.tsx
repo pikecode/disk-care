@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AppWindow } from "lucide-react";
 import { api } from "./api";
 
 export default function AppIcon({ path, bundleId, name, active }: { path?: string; bundleId: string; name: string; active: boolean }) {
@@ -18,5 +19,5 @@ export default function AppIcon({ path, bundleId, name, active }: { path?: strin
     observer.observe(element.current);
     return () => { cancelled = true; observer.disconnect(); };
   }, [path, bundleId, active]);
-  return <span className="residue-app-icon" ref={element} aria-hidden="true">{image ? <img src={image} alt="" onError={() => setImage(null)} /> : name.slice(0, 1).toUpperCase()}</span>;
+  return <span className="residue-app-icon" ref={element} aria-hidden="true" title={name}>{image ? <img src={image} alt="" onError={() => setImage(null)} /> : <AppWindow size={20} strokeWidth={1.5} />}</span>;
 }

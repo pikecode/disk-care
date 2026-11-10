@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { chromium } from "playwright";
 
 // 固定清单只执行仓库内受信的模拟脚本，不接受任意脚本路径。
-const cases = ["product-navigation", "scan-access", "cleanup-results", "cleanup-history", "scan-activity", "app-residue", "app-uninstall"];
+const cases = ["product-navigation", "scan-access", "cleanup-results", "cleanup-history", "scan-activity", "app-residue", "app-uninstall", "project", "space-map", "ai-data", "developer-tools"];
 const root = resolve(import.meta.dirname, "..");
 const output = resolve(root, "output/ui-check");
 mkdirSync(output, { recursive: true });
