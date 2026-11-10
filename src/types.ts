@@ -256,3 +256,14 @@ export interface AppUsage { path: string; bundleId: string; measuredAt: number; 
 export interface DeveloperEntry { tool: string; name: string; path: string | null; kind: string; basis: string; impact: string; allocatedBytes: number | null; entries: number | null; coverage: Coverage }
 export interface DeveloperReport { measuredAt: number; entries: DeveloperEntry[]; notes: string[] }
 export interface DeveloperPreview { measuredAt: number; executable: string; output: string; truncated: boolean }
+
+export interface AppExitPreview {
+  token: number;
+  name: string;
+  path: string;
+  bundleId: string;
+  expiresAt: number;
+  allowForce: boolean;
+  processes: { pid: number; name: string; executable: string }[];
+}
+export interface AppExitResult { remaining: AppExitPreview | null }

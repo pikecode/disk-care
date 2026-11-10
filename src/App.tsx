@@ -304,6 +304,18 @@ export default function App() {
     try { return await api.appUsage(path, bundleId); }
     finally { setStatus("idle"); }
   }
+  async function prepareAppExit(path: string, bundleId: string) {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("uninstall");
+    try { return await api.prepareAppExit(path, bundleId); }
+    finally { setStatus("idle"); }
+  }
+  async function executeAppExit(token: number, force: boolean) {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("uninstall");
+    try { return await api.executeAppExit(token, force); }
+    finally { setStatus("idle"); }
+  }
   async function prepareUninstall(path: string, bundleId: string) {
     if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
     setStatus("uninstall");
@@ -693,7 +705,7 @@ export default function App() {
               reports={aiReports} baselines={aiBaselines} onBaseline={(report) => setAiBaselines((previous) => [...previous.filter((b) => b.tool !== report.tool || b.root !== report.root), report])} onAnalyze={(roots) => void analyzeAi(roots)}
               onCancel={() => void api.cancel().catch((e) => setError(errorMessage(e)))} />
           </div>
-          <div className="application-host" hidden={view !== "residue"}><AppResidue onUsage={inspectAppUsage} active={view === "residue"} onPrepareUninstall={prepareUninstall} onExecuteUninstall={executeUninstall} desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={(bundleId, appPath) => void inspectResidue(bundleId, appPath)} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
+          <div className="application-host" hidden={view !== "residue"}><AppResidue onPrepareExit={prepareAppExit} onExit={executeAppExit} onUsage={inspectAppUsage} active={view === "residue"} onPrepareUninstall={prepareUninstall} onExecuteUninstall={executeUninstall} desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={(bundleId, appPath) => void inspectResidue(bundleId, appPath)} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
           <div hidden={view !== "history"}><CleanupHistory records={history} loading={historyLoading} error={historyError} disabled={!desktop || busy || browsing} onRefresh={() => void readCleanupHistory()} onReview={() => setView("overview")} onRescan={() => { setView("overview"); startScan("history"); }} /></div>
           {view === "overview" ? (
             <>

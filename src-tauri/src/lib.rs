@@ -79,6 +79,28 @@ fn app_uninstall_history(
     engine.uninstall_history()
 }
 #[tauri::command]
+async fn prepare_app_exit(
+    path: String,
+    bundle_id: String,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::AppExitPreview, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.prepare_app_exit(path, bundle_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn execute_app_exit(
+    token: u64,
+    force: bool,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::AppExitResult, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.execute_app_exit(token, force))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn prepare_app_uninstall(
     path: String,
     bundle_id: String,
@@ -356,6 +378,8 @@ pub fn run() {
             installed_apps,
             app_usage,
             app_icon,
+            prepare_app_exit,
+            execute_app_exit,
             prepare_app_uninstall,
             app_uninstall_history,
             execute_app_uninstall,

@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { ScanOrigin, ScanActivityReport, DeveloperReport, DeveloperPreview, AppUsage, UninstallRecord, UninstallPreview, UninstallResult, AppCatalog, ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
+import type { AppExitPreview, AppExitResult, ScanOrigin, ScanActivityReport, DeveloperReport, DeveloperPreview, AppUsage, UninstallRecord, UninstallPreview, UninstallResult, AppCatalog, ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
 export const desktop = isTauri();
 export const api = {
   developerTools: (ids: string[], selectedId?: string) => invoke<DeveloperReport>("analyze_developer_tools", {ids, selectedId}),
@@ -7,6 +7,8 @@ export const api = {
   chooseAnalysisDirectory: () => invoke<Item | null>("choose_analysis_directory"),
   appUsage: (path: string, bundleId: string) => invoke<AppUsage>("app_usage", { path, bundleId }),
   appIcon: (path: string, bundleId: string) => invoke<string | null>("app_icon", { path, bundleId }),
+  prepareAppExit: (path: string, bundleId: string) => invoke<AppExitPreview>("prepare_app_exit", { path, bundleId }),
+  executeAppExit: (token: number, force: boolean) => invoke<AppExitResult>("execute_app_exit", { token, force }),
   uninstallHistory: () => invoke<UninstallRecord[]>("app_uninstall_history"),
   prepareUninstall: (path: string, bundleId: string) => invoke<UninstallPreview>("prepare_app_uninstall", { path, bundleId }),
   executeUninstall: (token: number) => invoke<UninstallResult>("execute_app_uninstall", { token }),

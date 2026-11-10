@@ -4133,3 +4133,10 @@ main.has-actionbar .page-content { padding-bottom: 110px; }
 .residue-scope:focus-visible .residue-detail-heading { outline: 2px solid #82a592; outline-offset: 6px; border-radius: 8px; }
 
 .residue-app-list li.selected .residue-app-secondary,.residue-app-list li.selected .residue-copy-tag { color: #53675a; }
+
+.app-exit-processes { list-style: none; padding: 0; max-height: 180px; overflow-y: auto; border-block: 1px solid var(--line); }
+.app-exit-processes li { padding: 10px 0; }
+.app-exit-processes li+li { border-top: 1px solid var(--line); }
+.app-exit-processes strong { font-size: 12px; }
+.app-exit-processes span { margin-left: 10px; color: var(--muted); font-size: 11px; }
+.app-exit-processes code { display: block; overflow-wrap: anywhere; margin-top: 5px; color: var(--muted); font-size: 10px; }

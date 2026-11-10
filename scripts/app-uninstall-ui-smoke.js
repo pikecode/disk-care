@@ -13,6 +13,15 @@ async (page) => {
       if (cmd === 'cleanup_history') return [];
       if (cmd === 'app_uninstall_history') return [...(window.savedUninstall ? [window.savedUninstall] : []),{at:1,name:'历史样例',path:'/Applications/History.app',bundleId:'org.fixture.history',success:true,message:'应用包已移到废纸篓'}];
       if (cmd === 'installed_apps') return {apps:[{path:'/Applications/Test.app',name:'测试应用',bundleId:'org.fixture.app'},{path:'/Applications/System.app',name:'受保护样例',bundleId:'com.apple.fixture'}],coverage:{status:'complete',permissionDenied:0,excluded:0,limited:false,cancelled:false}};
+      if(cmd === 'prepare_app_exit') {
+        if(window.exitMode==='unavailable') throw '无法安全确认组件身份，请手动退出';
+        return {token:91,name:'测试应用',path:args.path,bundleId:args.bundleId,expiresAt:window.exitMode==='expired'?Date.now()-1:Date.now()+60000,allowForce:false,processes:[{pid:12345,name:'测试后台组件',executable:args.path+'/Contents/MacOS/helper'}]};
+      }
+      if(cmd === 'execute_app_exit') {
+        if(window.exitMode==='changed') throw '运行组件身份已变化，请重新检查';
+        if(!args.force && window.exitMode!=='normal-success') return {remaining:{token:92,name:'测试应用',path:'/Applications/Test.app',bundleId:'org.fixture.app',expiresAt:Date.now()+60000,allowForce:true,processes:[{pid:12345,name:'测试后台组件',executable:'/Applications/Test.app/Contents/MacOS/helper'}]}};
+        window.uninstallMode='ok';return {remaining:null};
+      }
       if (cmd === 'prepare_app_uninstall') {
         if(window.uninstallMode === 'running') throw '应用正在运行，请正常退出';
         return {token:42,name:'测试应用',path:args.path,bundleId:args.bundleId,expiresAt:window.uninstallMode === 'local-expired' ? Date.now()-1 : Date.now()+(window.uninstallMode === 'soon-expired' ? 1500 : 60000),before:window.beforeObservation ?? null};
@@ -53,6 +62,44 @@ async (page) => {
   await page.evaluate(()=>{window.uninstallMode='running';});
   await page.getByRole('button',{name:'卸载 测试应用',exact:true}).click();
   await page.getByRole('alert').getByText('应用正在运行，请正常退出',{exact:false}).waitFor();
+  const exitEntry=page.getByRole('button',{name:'退出应用后继续…',exact:true});
+  const exitDialog=page.getByRole('dialog',{name:'退出应用后继续卸载',exact:true});
+  await exitEntry.click();
+  await exitDialog.getByText('测试后台组件',{exact:true}).waitFor();
+  if(!await exitDialog.getByRole('button',{name:'取消',exact:true}).evaluate(el=>el===document.activeElement)) throw new Error('退出窗口默认焦点非取消');
+  if(await exitDialog.getByRole('button',{name:'强制退出并继续'}).count()) throw new Error('未正常退出就显示强制');
+  if(await page.evaluate(()=>window.calls.some(c=>c.cmd==='execute_app_exit'))) throw new Error('打开窗口自动退出');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(el=>document.activeElement===el,await exitEntry.elementHandle());
+  if(await page.evaluate(()=>window.calls.some(c=>c.cmd==='execute_app_exit'))) throw new Error('取消执行退出');
+  await exitEntry.click();await exitDialog.getByRole('button',{name:'正常退出并继续',exact:true}).click();
+  const forceExit=exitDialog.getByRole('button',{name:'强制退出并继续',exact:true});
+  await forceExit.waitFor();
+  if(await forceExit.isEnabled()) throw new Error('未勾选风险即可强制');
+  if(await page.evaluate(()=>window.calls.some(c=>c.cmd==='execute_app_exit'&&c.args.force))) throw new Error('正常超时自动强制');
+  await page.setViewportSize({width:960,height:660});
+  const exitBounds=await exitDialog.boundingBox();if(!exitBounds||exitBounds.y<0||exitBounds.y+exitBounds.height>660) throw new Error('退出对话框超出最低窗口');
+  await page.screenshot({path:'output/playwright/app-exit-confirm.png'});
+  await exitDialog.getByRole('checkbox',{name:'我了解强制退出可能丢失未保存内容',exact:true}).check();
+  await forceExit.click();
+  await page.getByRole('dialog',{name:'卸载 测试应用？'}).waitFor();
+  if(await page.evaluate(()=>window.calls.some(c=>c.cmd==='execute_app_uninstall'))) throw new Error('退出后自动卸载');
+  if(await page.getByRole('button',{name:'确认移到废纸篓',exact:true}).isEnabled()) throw new Error('退出确认复用于卸载');
+  const forceCall=await page.evaluate(()=>window.calls.find(c=>c.cmd==='execute_app_exit'&&c.args.force));
+  if(forceCall.args.token!==92) throw new Error('强制退出未使用刷新令牌');
+  await page.getByRole('button',{name:'取消卸载',exact:true}).click();
+  for(const mode of ['expired','unavailable','changed','normal-success']) {
+    await page.evaluate(m=>{window.uninstallMode='running';window.exitMode=m;},mode);
+    await entry.click();await exitEntry.click();
+    if(mode==='expired') {await exitDialog.getByText('退出预览已过期，请重新检查运行组件。',{exact:true}).waitFor();if(await exitDialog.getByRole('button',{name:'正常退出并继续'}).count()) throw new Error('过期仍有退出入口');}
+    else if(mode==='unavailable') await exitDialog.getByRole('alert').getByText('无法安全确认组件身份，请手动退出',{exact:true}).waitFor();
+    else {await exitDialog.getByRole('button',{name:'正常退出并继续',exact:true}).click();if(mode==='changed') await exitDialog.getByRole('alert').getByText('运行组件身份已变化，请重新检查',{exact:true}).waitFor();}
+    if(mode==='normal-success') {await page.getByRole('dialog',{name:'卸载 测试应用？'}).waitFor();await page.getByRole('button',{name:'取消卸载',exact:true}).click();}
+    else await exitDialog.getByRole('button',{name:'取消',exact:true}).click();
+  }
+  await page.setViewportSize({width:960,height:760});
+  await page.evaluate(()=>{window.exitMode='pending';window.uninstallMode='running';});
+  await entry.click();
   await page.evaluate(()=>{window.uninstallMode='ok';});
   await page.getByRole('button',{name:'重新检查并预览',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'卸载 测试应用？'});

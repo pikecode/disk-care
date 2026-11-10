@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AppWindow, Search, RefreshCw, ShieldCheck, FolderSearch, LoaderCircle, ChevronRight, Trash2 } from "lucide-react";
-import type { AppCatalog, ResidueReport, UninstallPreview, UninstallResult, UninstallRecord, AppUsage } from "./types";
+import AppExitDialog from "./AppExitDialog";
+import type { AppExitPreview, AppExitResult, AppCatalog, ResidueReport, UninstallPreview, UninstallResult, UninstallRecord, AppUsage } from "./types";
 import { api } from "./api";
 import { Menu } from "@tauri-apps/api/menu";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
@@ -9,7 +10,9 @@ import { compareAssociation, matchesAppReport, applicationGroups, visibleApplica
 import AppIcon from "./AppIcon";
 import CoverageDiagnostics from "./CoverageDiagnostics";
 const labels: Record<string, string> = { complete: "范围内检查完成", absent: "目录不存在", denied: "访问被拒绝", failed: "读取失败", skipped: "有内容跳过", limited: "达到上限", cancelled: "已停止", pending: "尚未访问" };
-export default function AppResidue({ onUsage, active, desktop, busy, scanning, report: savedReport, onInspect, onCancel, onPrepareUninstall, onExecuteUninstall }: {
+export default function AppResidue({ onPrepareExit, onExit, onUsage, active, desktop, busy, scanning, report: savedReport, onInspect, onCancel, onPrepareUninstall, onExecuteUninstall }: {
+  onPrepareExit: (path: string, bundleId: string) => Promise<AppExitPreview>;
+  onExit: (token: number, force: boolean) => Promise<AppExitResult>;
   onUsage: (path: string, bundleId: string) => Promise<AppUsage>;
   active: boolean; desktop: boolean; busy: boolean; scanning: boolean; report: ResidueReport | null;
   onPrepareUninstall: (path: string, bundleId: string) => Promise<UninstallPreview>;
@@ -41,6 +44,7 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
   const remaining = uninstallPlan ? Math.max(0, Math.ceil((uninstallPlan.expiresAt - previewTime) / 1000)) : 0;
   const previewExpired = !Number.isFinite(remaining) || remaining <= 0;
   const [uninstallError, setUninstallError] = useState<{ message: string; stage: "preview" | "execute"; path: string; bundleId: string } | null>(null);
+  const [exitTarget, setExitTarget] = useState<{path: string; bundleId: string} | null>(null);
   const [uninstallAck, setUninstallAck] = useState(false);
   const [uninstallWorking, setUninstallWorking] = useState(false);
   const [uninstalled, setUninstalled] = useState<UninstallResult | null>(null);
@@ -206,6 +210,7 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
       <p>{uninstallError.message}</p><code className="ai-path">{uninstallError.path}</code>
       <p>根据上方原因正常退出相关程序，或核对目标位置的访问权限后重试。重试会重新检查并要求确认，不会直接执行卸载。</p>
       <button className="button secondary" disabled={!desktop || busy || loadingApps || uninstallWorking} onClick={() => void previewUninstall(uninstallError.path, uninstallError.bundleId)}>重新检查并预览</button>
+      <button className="text-button" disabled={!desktop || busy || loadingApps || uninstallWorking} onClick={() => setExitTarget({path: uninstallError.path, bundleId: uninstallError.bundleId})}>退出应用后继续…</button>
     </section>}
     {error && <p role="alert">{error}</p>}
     {report && <div className="residue-results">{comparisonRecord && <section className="residue-comparison" aria-label="卸载前后观测"><h3>卸载前后观测</h3><p>记录针对所选应用副本；仍存在的关联项不等于可删除残留，本次未发现也不证明由卸载造成。</p>{comparison ? comparison.map(item => <div key={item.path}><strong>{item.name} · {item.status}</strong><p>卸载前：{item.beforeBytes === null ? "无完整占用" : bytes(item.beforeBytes)}；本次：{item.afterBytes === null ? "无完整占用" : bytes(item.afterBytes)}</p></div>) : <p>{!comparisonRecord.success ? "此操作未完成卸载，不生成卸载后对照。" : comparisonRecord.before ? "目标、规则版本或观测时间不满足对照条件，请主动重新检查；不推断释放空间。" : "没有卸载前观测，无法生成前后对照。"}</p>}</section>}<div className="residue-section-heading"><h3>检查结果</h3><span>最近一次检查</span></div><div className="residue-result-summary" aria-live="polite"><div><strong>{candidates}</strong><span>候选条目 · 未跨来源去重</span></div><div><strong>{complete ? "范围内完成" : "检查不完整"}</strong><span>{report.sources.length ? `${report.sources.length} 个来源` : "没有可用来源"}</span></div></div><p>以下为各来源已观测占用，不跨来源相加，也不代表可释放空间。</p><details className="residue-technical"><summary>报告目标：{report.target}</summary><p>报告目标：{report.target} · 观测时间：{new Date(report.measuredAt).toLocaleString()}。身份依据：{report.identitySource ?? "用户标识或样例规则，安装状态未知"}。占用不等于可回收量，不跨来源相加；同次检查硬链接去重，APFS 共享仍可能重复。</p></details><div className="residue-source-filters" role="group" aria-label="关联结果筛选">{([["all",`全部 ${report.sources.length}`],["content",`发现内容 ${report.sources.filter(s => s.candidates.length > 0).length}`],["attention",`需关注 ${report.sources.filter(attentionSource).length}`]] as const).map(([value,label]) => <button key={value} aria-pressed={sourceFilter === value} onClick={() => setSourceFilter(value)}>{label}</button>)}</div>{!visibleSources(report, sourceFilter).length && <p>此筛选条件下没有来源，完整报告仍保留。</p>}{visibleSources(report, sourceFilter).map(source => <article className="ai-report" key={source.path}>
@@ -220,6 +225,7 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
     </article>)}</div>}
       <details className="residue-history"><summary>卸载记录 · {history.length}</summary><p>最多保留最近 100 次执行记录。历史状态不代表应用当前仍在废纸篓。</p>{historyError && <p role="alert">{historyError}</p>}{!history.length && !historyError && <p>还没有卸载记录。</p>}{history.map((record, index) => <article key={`${record.at}-${index}`}><strong>{record.name} · {record.success ? "已移到废纸篓" : "未完成卸载"}</strong><p>{new Date(record.at).toLocaleString()}</p><code className="ai-path">{record.path}</code><p>{record.message}</p>{record.success && <p>恢复方式：在 Finder 的废纸篓中找到应用，使用“放回原处”；若已清空则需重新安装。</p>}<button className="text-button" disabled={busy || loadingApps || uninstallWorking} onClick={() => { setUninstallError(null); setUninstalled(null); setComparisonRecord(record); setAppPath(""); setBundleId(record.bundleId); setSpecial(false); setAck(false); }}>选择此标识检查关联文件</button><p>{record.before ? `已保存卸载前 ${record.before.sources.length} 个来源的观测` : "未保存卸载前观测，旧记录不能补造基线"}</p></article>)}<button className="text-button" disabled={busy} onClick={readHistory}>刷新卸载记录</button></details>
     </div>
+    {exitTarget && <AppExitDialog target={exitTarget} onPrepare={onPrepareExit} onExit={onExit} onCancel={() => setExitTarget(null)} onDone={() => { const target = exitTarget; setExitTarget(null); void previewUninstall(target.path, target.bundleId); }} />}
     <dialog className="uninstall-dialog" ref={uninstallDialog} aria-labelledby="uninstall-title" onCancel={e => { e.preventDefault(); if (!uninstallWorking) { setUninstallPlan(null); setUninstallAck(false); } }}>
       {uninstallPlan && <><h2 id="uninstall-title">卸载 {uninstallPlan.name}？</h2><div className="uninstall-impact"><div><strong>移到废纸篓</strong><span>仅所选应用本体</span></div><div><strong>保留</strong><span>缓存、设置与个人资料</span></div></div><code className="ai-path">{uninstallPlan.path}</code><p>可在废纸篓中“放回原处”。本次不会清空废纸篓，也不会立即释放空间。</p><details className="residue-technical"><summary>关联检查与卸载范围说明</summary><p>{uninstallPlan.before ? `将保存 ${new Date(uninstallPlan.before.measuredAt).toLocaleString()} 的卸载前观测（${uninstallPlan.before.sources.length} 个来源），用于之后主动复查。` : "没有近期卸载前观测。需要前后对照时，可取消后先检查关联文件。"}</p><p>软件附带专用卸载器时优先使用。后台服务和扩展不会被移除；本次操作不代表彻底卸载。预览有效期最多60秒。</p><code className="ai-path">{uninstallPlan.bundleId}</code></details><p role="status">{uninstallWorking ? "正在处理，请等待系统返回结果。" : previewExpired ? "预览已过期，请重新预览并确认。" : `预览剩余 ${remaining} 秒`}</p><label><input type="checkbox" checked={uninstallAck} disabled={uninstallWorking || previewExpired} onChange={e => setUninstallAck(e.target.checked)} />我确认将这个应用移到废纸篓</label><div className="uninstall-actions"><button className="button secondary" ref={uninstallCancel} disabled={uninstallWorking} onClick={() => { setUninstallPlan(null); setUninstallAck(false); }}>取消卸载</button>{previewExpired && !uninstallWorking && <button className="button secondary" onClick={() => void previewUninstall()}>重新预览卸载</button>}<button className="button primary" disabled={!uninstallAck || uninstallWorking || previewExpired} onClick={() => void confirmUninstall()}>{uninstallWorking ? "正在移到废纸篓…" : "确认移到废纸篓"}</button></div></>}
     </dialog>

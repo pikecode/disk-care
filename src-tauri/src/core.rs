@@ -6,6 +6,9 @@ mod app_residue;
 #[path = "dev_tools.rs"]
 mod dev_tools;
 pub use dev_tools::{DeveloperPreview, DeveloperReport};
+#[path = "app_exit.rs"]
+mod app_exit;
+pub use app_exit::{AppExitPreview, AppExitResult};
 #[path = "app_uninstall.rs"]
 mod app_uninstall;
 pub use app_residue::{AppCatalog, AppUsage, ResidueReport};
@@ -386,6 +389,7 @@ pub struct Engine {
     selected_directory: Mutex<Option<SelectedDirectory>>,
     residue: Mutex<Option<ResidueReport>>,
     uninstall: Mutex<Option<app_uninstall::UninstallPlan>>,
+    app_exit: Mutex<Option<app_exit::AppExitPlan>>,
 }
 struct Job<'a>(&'a AtomicBool);
 impl Drop for Job<'_> {
@@ -410,6 +414,7 @@ impl Engine {
             selected_directory: Mutex::new(None),
             residue: Mutex::new(None),
             uninstall: Mutex::new(None),
+            app_exit: Mutex::new(None),
         }
     }
     fn job(&self) -> Result<Job<'_>, String> {

@@ -37,8 +37,8 @@ pub struct UninstallRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before: Option<AssociationSnapshot>,
 }
-#[derive(Debug, PartialEq)]
-struct Identity {
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Identity {
     dev: u64,
     ino: u64,
     mode: u32,
@@ -46,7 +46,7 @@ struct Identity {
     modified: (i64, i64),
     changed: (i64, i64),
 }
-fn identity(path: &Path) -> Result<Identity, String> {
+pub(super) fn identity(path: &Path) -> Result<Identity, String> {
     let m = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     Ok(Identity {
         dev: m.dev(),
@@ -58,13 +58,13 @@ fn identity(path: &Path) -> Result<Identity, String> {
     })
 }
 #[derive(Debug, PartialEq)]
-struct Snapshot {
+pub(super) struct Snapshot {
     app: Identity,
     info: Identity,
     parents: Vec<(u64, u64)>,
     reference: String,
 }
-fn snapshot(path: &Path) -> Result<Snapshot, String> {
+pub(super) fn snapshot(path: &Path) -> Result<Snapshot, String> {
     safe_path(path)?;
     let info = path.join("Contents/Info.plist");
     safe_path(&info)?;
@@ -93,7 +93,7 @@ pub(super) struct UninstallPlan {
     preview: UninstallPreview,
     snapshot: Snapshot,
 }
-fn protect(path: &Path, id: &str, executable: &Path) -> Result<(), String> {
+pub(super) fn protect(path: &Path, id: &str, executable: &Path) -> Result<(), String> {
     if id.to_ascii_lowercase().starts_with("com.apple.")
         || id == "local.diskcare.desktop"
         || executable.starts_with(path)
