@@ -35,3 +35,9 @@ export function attentionSource(source: ResidueReport["sources"][number]) {
 export function visibleSources(report: ResidueReport, filter: "all" | "content" | "attention") {
   return report.sources.filter(source => filter === "all" || (filter === "content" ? source.candidates.length > 0 : attentionSource(source)));
 }
+
+export function matchesAppReport(report: ResidueReport | null, bundleId: string, appPath: string, special: boolean) {
+  if (!report) return false;
+  if (special) return !report.targetAppPath && report.target === "cc-switch（历史样例专属路径）";
+  return report.target === bundleId && (appPath ? report.targetAppPath === appPath : !report.targetAppPath);
+}

@@ -39,7 +39,7 @@ async (page) => {
   await page.getByRole('button',{name:'应用',exact:true}).click();
   await page.getByRole('button',{name:'读取应用列表',exact:true}).click();
   if(await page.getByRole('button',{name:'卸载 受保护样例',exact:true}).isEnabled()) throw new Error('受保护应用仍可发起卸载');
-  await page.getByRole('button',{name:'检查 测试应用',exact:true}).click();
+  await page.getByRole('button',{name:'查看 测试应用',exact:true}).click();
   if(await page.evaluate(()=>window.calls.some(c=>c.cmd==='prepare_app_uninstall'||c.cmd==='execute_app_uninstall'))) throw new Error('选择应用触发卸载');
   await page.getByRole('textbox',{name:'搜索应用'}).fill('测试');
   await page.getByRole('button',{name:'清理',exact:true}).click();
@@ -47,8 +47,7 @@ async (page) => {
   if(await page.getByRole('textbox',{name:'搜索应用'}).inputValue()!=='测试') throw new Error('切页丢失搜索');
   await page.getByText('卸载记录 · 1',{exact:true}).click();
   await page.getByText('历史样例 · 已移到废纸篓',{exact:true}).waitFor();
-  await page.getByRole('checkbox',{name:'我已了解检查来源与敏感范围'}).check();
-  await page.getByRole('button',{name:'开始只读残留检查'}).click();
+  await page.getByRole('button',{name:'检查关联文件',exact:true}).click();
   await page.locator('summary').filter({hasText:'报告目标：org.fixture.app'}).waitFor();
   const entry = page.getByRole('button',{name:'卸载此应用…',exact:true});
   await page.evaluate(()=>{window.uninstallMode='running';});
@@ -108,13 +107,13 @@ async (page) => {
   if(await dialog.getByRole('button',{name:'取消卸载'}).isEnabled()) throw new Error('执行中允许取消系统移动');
   await page.evaluate(()=>window.finishUninstall());
   await page.getByRole('status').getByText('测试应用 已移到废纸篓',{exact:true}).waitFor();
-  if(await page.getByRole('button',{name:'检查 测试应用',exact:true}).count()) throw new Error('卸载后未更新列表');
+  if(await page.getByRole('button',{name:'查看 测试应用',exact:true}).count()) throw new Error('卸载后未更新列表');
   if(await page.evaluate(()=>window.calls.filter(c=>c.cmd==='inspect_app_residue').length)!==1) throw new Error('卸载后自动扫描');
   await page.getByText('如何恢复应用？',{exact:true}).click();
   await page.getByText('移入位置：/fixture/.Trash/Test.app',{exact:true}).waitFor();
   await page.getByRole('button',{name:'检查该应用的关联文件'}).click();
   await page.getByRole('checkbox',{name:'我已了解检查来源与敏感范围'}).check();
-  await page.getByRole('button',{name:'开始只读残留检查'}).click();
+  await page.getByRole('button',{name:'检查关联文件',exact:true}).click();
   await page.locator('summary').filter({hasText:'报告目标：org.fixture.app'}).waitFor();
   await page.getByRole('region',{name:'卸载前后观测'}).getByText(/应用缓存 · 仍存在关联项/).waitFor();
   await page.getByRole('region',{name:'卸载前后观测'}).getByText(/应用数据 · 本次未发现/).waitFor();

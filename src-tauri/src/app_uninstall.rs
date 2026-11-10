@@ -553,7 +553,7 @@ mod tests {
         let source = f.0.join("worker.c");
         fs::write(
             &source,
-            "#include <unistd.h>\nint main(void) { sleep(10); return 0; }",
+            "#include <unistd.h>\nint main(void) { write(1, \"R\", 1); sleep(10); return 0; }",
         )
         .unwrap();
         assert!(Command::new("/usr/bin/cc")
@@ -564,8 +564,13 @@ mod tests {
             .unwrap()
             .success());
         let plan = preview(&engine, &p);
-        let mut child = Command::new(&executable).arg("10").spawn().unwrap();
-        thread::sleep(Duration::from_millis(100));
+        let mut child = Command::new(&executable)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = [0u8; 1];
+        child.stdout.take().unwrap().read_exact(&mut ready).unwrap();
+        assert_eq!(ready, [b'R']);
         assert!(
             child.try_wait().unwrap().is_none(),
             "测试辅助进程必须真实运行"
@@ -586,8 +591,13 @@ mod tests {
             .status()
             .unwrap()
             .success());
-        let mut child = Command::new(&unrelated).spawn().unwrap();
-        thread::sleep(Duration::from_millis(100));
+        let mut child = Command::new(&unrelated)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // 确认已进入main，避免启动尚未完成时移除文件导致夹具被系统终止。
+        child.stdout.take().unwrap().read_exact(&mut ready).unwrap();
+        assert_eq!(ready, [b'R']);
         fs::remove_file(&unrelated).unwrap();
         let unrelated_result =
             engine.prepare_uninstall(p.to_string_lossy().into(), "org.fixture.uninstall".into());

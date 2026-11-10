@@ -1,4 +1,4 @@
-import { compareAssociation, visibleApplications, visibleSources } from "../src/appAssociation";
+import { matchesAppReport, compareAssociation, visibleApplications, visibleSources } from "../src/appAssociation";
 import type { ResidueReport, UninstallRecord } from "../src/types";
 function check(value: unknown, message: string) { if (!value) throw new Error(message); }
 const record: UninstallRecord = { at: 20, name: "应用", path: "/Applications/App.app", bundleId: "org.fixture.app", success: true, message: "已移到废纸篓", before: {ruleVersion:2, measuredAt:10,sources:[{name:"缓存",path:"/fixture/cache",status:"complete",present:true,allocatedBytes:4096}]} };
@@ -31,3 +31,17 @@ check(visibleSources(absent,"content").length===0,"不存在不算有内容");
 check(visibleSources(absent,"attention").length===0,"不存在不等于失败");
 check(visibleSources({...report,sources:[{...report.sources[0],coverage:{...report.sources[0].coverage,status:"denied"},candidates:[]}]},"attention").length===1,"拒绝必须可筛出");
 console.log("通过：应用副本／保护分组、搜索与排序，以及关联来源筛选。");
+
+const selectedPath="/Applications/App.app";
+const installedReport={...report,targetAppPath:selectedPath};
+check(matchesAppReport(installedReport,report.target,selectedPath,false),"同标识同路径报告可展示");
+check(!matchesAppReport(installedReport,report.target,"/Applications/Other.app",false),"同标识不同副本不能串报告");
+check(!matchesAppReport(installedReport,report.target,"",false),"安装报告不能作为手动标识报告");
+check(!matchesAppReport(report,report.target,selectedPath,false),"缺包身份的报告不能绑定已安装副本");
+check(matchesAppReport(report,report.target,"",false),"手动同标识报告可展示");
+check(!matchesAppReport(report,"org.other.app","",false),"不同标识不能串报告");
+const presetReport={...report,target:"cc-switch（历史样例专属路径）"};
+check(matchesAppReport(presetReport,"","",true),"准确样例目标可展示");
+check(!matchesAppReport(report,report.target,"",true),"通用报告不能当作样例");
+check(!matchesAppReport(null,report.target,"",false),"空报告无匹配结果");
+console.log("通过：应用包、标识与特殊样例报告目标匹配及副本隔离。");

@@ -4131,3 +4131,5 @@ dialog::backdrop {
 .scan-activity li { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .scan-activity code { overflow-wrap: anywhere; }
 .scan-origin-note { font-size: 12px; line-height: 1.8; color: var(--green); }
+
+.residue-report-note { padding: 12px; border-left: 3px solid #bacab4; background: #f0f3ec; border-radius: 4px; font-size: 12px; line-height: 1.7; }

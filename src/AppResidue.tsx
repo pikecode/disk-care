@@ -3,11 +3,11 @@ import { AppWindow, Search, RefreshCw, ShieldCheck, FolderSearch, LoaderCircle }
 import type { AppCatalog, ResidueReport, UninstallPreview, UninstallResult, UninstallRecord, AppUsage } from "./types";
 import { api } from "./api";
 import { bytes } from "./format";
-import { compareAssociation, applicationGroups, visibleApplications, visibleSources, attentionSource, type AppGroup } from "./appAssociation";
+import { compareAssociation, matchesAppReport, applicationGroups, visibleApplications, visibleSources, attentionSource, type AppGroup } from "./appAssociation";
 import AppIcon from "./AppIcon";
 import CoverageDiagnostics from "./CoverageDiagnostics";
 const labels: Record<string, string> = { complete: "范围内检查完成", absent: "目录不存在", denied: "访问被拒绝", failed: "读取失败", skipped: "有内容跳过", limited: "达到上限", cancelled: "已停止", pending: "尚未访问" };
-export default function AppResidue({ onUsage, active, desktop, busy, scanning, report, onInspect, onCancel, onPrepareUninstall, onExecuteUninstall }: {
+export default function AppResidue({ onUsage, active, desktop, busy, scanning, report: savedReport, onInspect, onCancel, onPrepareUninstall, onExecuteUninstall }: {
   onUsage: (path: string, bundleId: string) => Promise<AppUsage>;
   active: boolean; desktop: boolean; busy: boolean; scanning: boolean; report: ResidueReport | null;
   onPrepareUninstall: (path: string, bundleId: string) => Promise<UninstallPreview>;
@@ -51,13 +51,14 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
   const [group, setGroup] = useState<AppGroup>("all");
   const [descending, setDescending] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<"all" | "content" | "attention">("all");
-  useEffect(() => setSourceFilter("all"), [report]);
   const [query, setQuery] = useState("");
   const [catalog, setCatalog] = useState<AppCatalog | null>(null);
   const [loadingApps, setLoadingApps] = useState(false);
   const [appPath, setAppPath] = useState("");
   const [bundleId, setBundleId] = useState("");
   const [special, setSpecial] = useState(false);
+  const report = matchesAppReport(savedReport, bundleId, appPath, special) ? savedReport : null;
+  useEffect(() => setSourceFilter("all"), [report]);
   const valid = bundleId.length <= 200 && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundleId);
   const [ack, setAck] = useState(false);
   const [error, setError] = useState("");
@@ -126,7 +127,7 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
         }}>{apps.map(app => <li key={app.path} className={appPath === app.path ? "selected" : ""}>
           <AppIcon path={app.path} bundleId={app.bundleId} name={app.name} active={active && desktop} />
           <div title={`${app.name}\n${app.bundleId}\n${app.path}`}><strong>{app.name}</strong>{groups.protectedApp(app.bundleId) && <small className="residue-copy-tag">受保护</small>}{(groups.copies.get(app.bundleId) ?? 0) > 1 && <small className="residue-copy-tag">已发现 {groups.copies.get(app.bundleId)} 个副本</small>}<span>{app.version ? `版本 ${app.version}` : ""}</span></div>
-          <button className="residue-check" aria-label={`检查 ${app.name}`} disabled={busy || locating || uninstallWorking} onClick={event => selectApp(app, event.currentTarget)}>检查</button>
+          <button className="residue-check" aria-label={`查看 ${app.name}`} aria-current={appPath === app.path ? "true" : undefined} disabled={busy || locating || uninstallWorking} onClick={event => selectApp(app, event.currentTarget)}>查看</button>
           <button className="residue-check residue-row-uninstall" aria-label={`卸载 ${app.name}`} title={groups.protectedApp(app.bundleId) ? "系统应用与留白自身受到保护" : "预览卸载范围，确认后才移到废纸篓"} disabled={!desktop || busy || locating || uninstallWorking || groups.protectedApp(app.bundleId)} onClick={event => { selectApp(app, event.currentTarget); void previewUninstall(app.path, app.bundleId); }}>卸载…</button>
         </li>)}</ul>
         {!apps.length && <div className="residue-empty"><Search size={28} /><h3>{catalog.apps.length ? "未找到应用" : "未发现应用"}</h3><p>{catalog.apps.length ? "没有匹配的应用，试试其他名称或分组。" : "可查看读取详情，或使用手动检查。"}</p></div>}
@@ -140,8 +141,8 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
     <div className="residue-inspector">
 
       {uninstalled && <div className="residue-uninstalled" role="status"><strong>{uninstalled.name} 已移到废纸篓</strong><code className="ai-path">原位置：{uninstalled.path}</code>{uninstalled.warning && <p role="alert">{uninstalled.warning}</p>}<p>关联数据已保留，应用移入废纸篓不会立即释放空间。</p><details><summary>如何恢复应用？</summary><p>打开 Finder 的废纸篓，找到应用并选择“放回原处”。若已清空废纸篓，需要重新安装。</p>{uninstalled.trashPath && <code className="ai-path">移入位置：{uninstalled.trashPath}</code>}</details><button className="text-button" disabled={busy || loadingApps || uninstallWorking} onClick={() => { setComparisonRecord({at:uninstalled.at ?? Date.now(), name:uninstalled.name,path:uninstalled.path,bundleId:uninstalled.bundleId,success:true,message:"应用包已移到废纸篓",before:uninstalled.before}); setAppPath(""); setBundleId(uninstalled.bundleId); setSpecial(false); setAck(false); scope.current?.focus({ preventScroll: true }); }}>检查该应用的关联文件</button></div>}
-      {!valid && !special && <div className="residue-welcome"><span className="residue-welcome-icon"><FolderSearch size={40} strokeWidth={1.25} /></span><h2>检查应用关联文件</h2><p>在左侧找到应用，点击“检查”。<br />关联数据、用途与检查结果会在这里展示。</p><span className="residue-readonly"><ShieldCheck size={14} />只读检查 · 不会删除文件</span></div>}
-      {(valid || special) && <section className="residue-scope" ref={scope} tabIndex={-1} aria-label="确认应用检查范围" onKeyDown={event => {
+      {!valid && !special && <div className="residue-welcome"><span className="residue-welcome-icon"><FolderSearch size={40} strokeWidth={1.25} /></span><h2>检查应用关联文件</h2><p>在左侧找到应用，点击“查看”。<br />关联数据、用途与检查结果会在这里展示。</p><span className="residue-readonly"><ShieldCheck size={14} />只读检查 · 不会删除文件</span></div>}
+      {(valid || special) && <section className="residue-scope" ref={scope} tabIndex={-1} aria-label="应用详情" onKeyDown={event => {
         if (event.key !== "Escape" || busy || loadingApps || uninstallPlan) return;
         event.preventDefault(); event.stopPropagation();
         if (selectedButton.current?.isConnected && !selectedButton.current.disabled) selectedButton.current.focus();
@@ -150,19 +151,20 @@ export default function AppResidue({ onUsage, active, desktop, busy, scanning, r
       <header className="residue-detail-heading"><AppIcon path={appPath || undefined} bundleId={bundleId} name={selectedName} active={active && desktop} /><div><span className="residue-kicker">{appPath ? "已选择应用" : "手动检查"}</span><h2>{selectedName}</h2></div></header>
       <p className="residue-key-hint">Esc 返回应用列表</p>
       <code className="ai-path">{appPath || (special ? "历史样例路径" : bundleId)}</code>
-      {appPath && <section className="residue-usage" aria-label="应用本体"><div className="residue-section-heading"><h3>应用本体</h3><span>不包含用户关联数据</span></div>{selectedUsage ? <><strong className="residue-usage-value">{bytes(selectedUsage.allocatedBytes)}</strong><p>已观测分配块 · {selectedUsage.entries} 条目 · {labels[selectedUsage.coverage.status] ?? "覆盖未知"}</p><p>{new Date(selectedUsage.measuredAt).toLocaleString()}</p><CoverageDiagnostics coverage={selectedUsage.coverage} /></> : <p>按需检查所选应用包的占用，不会读取文件正文。</p>}<div className="residue-usage-actions">{usageWorking ? <button className="button secondary" onClick={onCancel}>停止占用检查</button> : <button className="button secondary" disabled={!desktop || busy || loadingApps || locating || uninstallWorking} onClick={() => void inspectUsage()}>计算应用本体占用</button>}<button className="text-button" disabled={!desktop || busy || loadingApps || locating || uninstallWorking || groups.protectedApp(bundleId)} onClick={() => void previewUninstall()}>{uninstallWorking ? "正在准备卸载…" : "卸载此应用…"}</button></div><details className="residue-technical"><summary>占用统计说明</summary><p>占用不等于可释放量。遍历预算5秒，跳过符号链接与跨设备，同卷硬链接去重，包含目录分配块。</p></details>{usageError && <p role="alert">{usageError}</p>}</section>}
-
+      {savedReport && !report && (valid || special) && <p className="residue-report-note" role="status">当前目标没有匹配的检查报告。上次报告已保留，切回原目标后可查看匹配结果。</p>}
       {comparisonRecord && <p className="residue-association-note">已选择 {comparisonRecord.name} 的卸载记录。{comparisonRecord.before ? "主动检查后可对照卸载前观测。" : "没有卸载前观测，本次仅显示当前关联项。"}历史不证明当前没有其他安装副本。</p>}
       <div className="residue-section-heading"><h3>检查范围</h3><span className="residue-readonly"><ShieldCheck size={13} />只读</span></div>
       <p>查看缓存、应用数据与设置等关联文件，只检查，不删除。</p>
+      {!appPath && <label><input type="checkbox" checked={ack} disabled={busy} onChange={e => setAck(e.target.checked)} />我已了解检查来源与敏感范围</label>}
+      <div className="ai-report-controls">{scanning ? <button className="button secondary" onClick={onCancel}>停止关联检查</button> : <button className="button primary" aria-label="检查关联文件" disabled={!desktop || busy || loadingApps || uninstallWorking || (!appPath && !ack) || locating || (!special && !valid)} onClick={() => { setError(""); onInspect(special ? null : bundleId, appPath || undefined); }}>检查关联文件</button>}{appPath && <button className="text-button" disabled={!desktop || busy || loadingApps || locating || uninstallWorking || groups.protectedApp(bundleId)} onClick={() => void previewUninstall()}>{uninstallWorking ? "正在准备卸载…" : "卸载此应用…"}</button>}</div>
       <details className="residue-technical"><summary>查看检查位置与说明</summary>
       <div className="residue-source-preview">{(special ? [["配置目录", "CC Switch 配置元数据"], ["安装包", "下载目录第一层名称线索"], ["崩溃记录", "CrashReporter 第一层名称线索"]] : [["应用缓存", "可重建性与独占性未验证"], ["应用数据", "可能包含个人资料，默认保留"], ["偏好设置", "可能包含敏感配置，默认保留"], ["应用日志", "排障记录可能含敏感信息，默认保留"], ["保存状态", "窗口与会话恢复资料，默认保护"]]).map(([name, note]) => <div key={name}><span>{name}</span><small>{note}</small></div>)}</div>
       {special ? <ul><li>~/.cc-switch</li><li>~/Downloads（仅第一层）</li><li>~/Library/Application Support/CrashReporter（仅第一层）</li></ul> : <ul><li>~/Library/Caches/{bundleId}</li><li>~/Library/Application Support/{bundleId}</li><li>~/Library/Preferences/{bundleId}.plist</li><li>~/Library/Logs/{bundleId}</li><li>~/Library/Saved Application State/{bundleId}.savedState</li></ul>}
       <p>仅检查上述路径，不读取配置或凭据正文；其他目录名、容器及共享组未覆盖。关联文件不等于卸载残留或可删除文件。</p>
       <p>共享上限为 30 秒、20,000 条目、200 候选、12 层；不跟随链接，不跨设备。</p>
       <p>{appPath ? "检查前复核应用标识，变化时需重新选择。" : "安装状态未知。"}进程、安装收据、挂载镜像未检查。</p></details>
-      <label><input type="checkbox" checked={ack} disabled={busy} onChange={e => setAck(e.target.checked)} />我已了解检查来源与敏感范围</label>
-      <div className="ai-report-controls">{scanning ? <button className="button secondary" onClick={onCancel}>停止残留检查</button> : <button className="button primary" aria-label="开始只读残留检查" disabled={!desktop || busy || loadingApps || !ack || locating || (!special && !valid)} onClick={() => { setError(""); onInspect(special ? null : bundleId, appPath || undefined); }}>检查关联文件</button>}</div>
+
+      {appPath && <section className="residue-usage" aria-label="应用本体"><div className="residue-section-heading"><h3>应用本体</h3><span>不包含用户关联数据</span></div>{selectedUsage ? <><strong className="residue-usage-value">{bytes(selectedUsage.allocatedBytes)}</strong><p>已观测分配块 · {selectedUsage.entries} 条目 · {labels[selectedUsage.coverage.status] ?? "覆盖未知"}</p><p>{new Date(selectedUsage.measuredAt).toLocaleString()}</p><CoverageDiagnostics coverage={selectedUsage.coverage} /></> : <p>按需检查所选应用包的占用，不会读取文件正文。</p>}<div className="residue-usage-actions">{usageWorking ? <button className="button secondary" onClick={onCancel}>停止占用检查</button> : <button className="button secondary" disabled={!desktop || busy || loadingApps || locating || uninstallWorking} onClick={() => void inspectUsage()}>计算应用本体占用</button>}</div><details className="residue-technical"><summary>占用统计说明</summary><p>占用不等于可释放量。遍历预算5秒，跳过符号链接与跨设备，同卷硬链接去重，包含目录分配块。</p></details>{usageError && <p role="alert">{usageError}</p>}</section>}
       </section>}
     {uninstallError && <section className="residue-uninstall-error" role="alert" aria-label="卸载未完成">
       <h3>{uninstallError.stage === "preview" ? "暂时无法准备卸载" : "卸载未完成"}</h3>
