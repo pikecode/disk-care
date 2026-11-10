@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "disk-care"
-version = "0.9.37"
+version = "0.9.38"
 dependencies = [
  "libc",
  "objc2",

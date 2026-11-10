@@ -1,6 +1,7 @@
 use super::*;
 use app_residue::app_identity;
 use app_uninstall::{identity, protect, snapshot, Identity, Snapshot};
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 
 static NEXT_EXIT_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -12,7 +13,7 @@ pub struct AppExitProcess {
     pub name: String,
     pub executable: String,
     #[serde(skip_serializing)]
-    started: f64,
+    started: String,
     #[serde(skip_serializing)]
     executable_identity: Identity,
 }
@@ -58,16 +59,75 @@ fn process_record(
     if !belongs_to_target(&executable, target, pid) {
         return None;
     }
-    let started = app.launchDate()?.timeIntervalSince1970();
-    if !started.is_finite() || started <= 0.0 {
-        return None;
-    }
+    let started = app.launchDate()?.timeIntervalSince1970().to_string();
     Some(AppExitProcess {
         pid,
         name: app.localizedName().map_or(id, |s| s.to_string()),
         executable: executable.to_str()?.into(),
         executable_identity: identity(&executable).ok()?,
         started,
+    })
+}
+#[cfg(target_os = "macos")]
+fn parse_lsof_processes(stdout: &str, target: &Path) -> BTreeMap<i32, PathBuf> {
+    let mut pid = None;
+    let mut text_file = false;
+    let mut processes = BTreeMap::new();
+    for field in stdout.lines() {
+        if let Some(value) = field.strip_prefix('p') {
+            pid = value.parse::<i32>().ok();
+            text_file = false;
+        } else if field == "ftxt" {
+            text_file = true;
+        } else if let Some(value) = field.strip_prefix('f') {
+            text_file = value == "txt";
+        } else if let Some(value) = field.strip_prefix('n') {
+            if text_file {
+                let executable = PathBuf::from(value);
+                if let Some(pid) = pid.filter(|pid| belongs_to_target(&executable, target, *pid)) {
+                    processes.entry(pid).or_insert(executable);
+                }
+            }
+            text_file = false;
+        }
+    }
+    processes
+}
+#[cfg(target_os = "macos")]
+fn lsof_processes(target: &Path) -> Result<BTreeMap<i32, PathBuf>, String> {
+    let mut command = Command::new("/usr/sbin/lsof");
+    command.args(["-nP", "-F", "pfn", "+D"]).arg(target);
+    let (status, stdout, stderr) = run_command_output(command, Duration::from_secs(5))
+        .map_err(|_| "应用文件占用检查未完成，请稍后重试")?;
+    if !matches!(status.code(), Some(0 | 1)) || !stderr.is_empty() {
+        return Err("无法完整检查应用文件占用，请稍后重试".into());
+    }
+    Ok(parse_lsof_processes(&stdout, target))
+}
+#[cfg(target_os = "macos")]
+fn process_start(pid: i32) -> Result<String, String> {
+    let mut command = Command::new("/bin/ps");
+    command.args(["-p", &pid.to_string(), "-o", "lstart="]);
+    let (status, stdout, stderr) = run_command_output(command, Duration::from_secs(2))
+        .map_err(|_| "无法复核运行组件启动时间".to_string())?;
+    let started = stdout.trim();
+    if !status.success() || !stderr.is_empty() || started.is_empty() {
+        return Err("无法复核运行组件启动时间".into());
+    }
+    Ok(started.into())
+}
+#[cfg(target_os = "macos")]
+fn lsof_process_record(pid: i32, executable: PathBuf, target: &Path) -> Option<AppExitProcess> {
+    let executable = fs::canonicalize(executable).ok()?;
+    if !belongs_to_target(&executable, target, pid) {
+        return None;
+    }
+    Some(AppExitProcess {
+        pid,
+        name: executable.file_name()?.to_string_lossy().into(),
+        executable: executable.to_str()?.into(),
+        executable_identity: identity(&executable).ok()?,
+        started: process_start(pid).ok()?,
     })
 }
 #[cfg(target_os = "macos")]
@@ -78,6 +138,13 @@ fn running_inside(target: &Path) -> Result<Vec<AppExitProcess>, String> {
             .iter()
             .filter_map(|app| process_record(&app, target))
             .collect::<Vec<_>>();
+        let known = found.iter().map(|process| process.pid).collect::<Vec<_>>();
+        found.extend(
+            lsof_processes(target)?
+                .into_iter()
+                .filter(|(pid, _)| !known.contains(pid))
+                .filter_map(|(pid, executable)| lsof_process_record(pid, executable, target)),
+        );
         if found.len() > 32 {
             return Err("运行组件超过32项，请手动退出后重试".into());
         }
@@ -196,31 +263,32 @@ impl Engine {
 fn request_exit(processes: &[AppExitProcess], target: &Path, force: bool) -> Result<(), String> {
     use objc2_app_kit::NSRunningApplication;
     objc2::rc::autoreleasepool(|_| {
+        let current = running_inside(target)?;
         let mut verified = Vec::new();
         for expected in processes {
+            if let Some(actual) = current.iter().find(|process| process.pid == expected.pid) {
+                if actual != expected {
+                    return Err("运行组件身份已变化，请重新检查；没有继续结束其他进程".into());
+                }
+                verified.push(expected);
+            } else if unsafe { libc::kill(expected.pid, 0) } == 0 {
+                return Err("无法复核运行组件身份，请手动退出后重试".into());
+            }
+        }
+        for expected in verified {
             if let Some(app) =
                 NSRunningApplication::runningApplicationWithProcessIdentifier(expected.pid)
             {
-                if app.isTerminated() {
-                    continue;
+                if force {
+                    app.forceTerminate();
+                } else {
+                    app.terminate();
                 }
-                if process_record(&app, target).as_ref() != Some(expected) {
-                    return Err("运行组件身份已变化，请重新检查；没有继续结束其他进程".into());
-                }
-                verified.push((app, expected));
-            }
-        }
-        for (app, expected) in verified {
-            if app.isTerminated() {
-                continue;
-            }
-            if process_record(&app, target).as_ref() != Some(expected) {
-                return Err("运行组件身份已变化，请重新检查".into());
-            }
-            if force {
-                app.forceTerminate();
             } else {
-                app.terminate();
+                let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+                if unsafe { libc::kill(expected.pid, signal) } != 0 {
+                    return Err("系统拒绝退出运行组件，请检查访问权限".into());
+                }
             }
         }
         Ok(())
@@ -256,6 +324,20 @@ mod tests {
         ] {
             assert!(!belongs_to_target(Path::new(path), root, pid));
         }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn lsof_parser_only_uses_target_text_executables() {
+        let target = Path::new("/Applications/Example.app");
+        let output = "p20\nfwd\nn/tmp/note\nftxt\nn/Applications/Example.app/Contents/MacOS/main\np21\nftxt\nn/Applications/Other.app/Contents/MacOS/other\np22\nfmem\nn/Applications/Example.app/Contents/MacOS/module\np1\nftxt\nn/Applications/Example.app/Contents/MacOS/system\n";
+        let found = parse_lsof_processes(output, target);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found.get(&20),
+            Some(&PathBuf::from(
+                "/Applications/Example.app/Contents/MacOS/main"
+            ))
+        );
     }
     #[test]
     fn exit_requires_current_token_and_normal_attempt_before_force() {
