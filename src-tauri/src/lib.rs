@@ -151,6 +151,7 @@ fn scan_roots(engine: State<'_, Arc<Engine>>) -> Vec<Item> {
 }
 #[tauri::command]
 async fn scan_disk(
+    origin: Option<core::ScanOrigin>,
     extended: Option<bool>,
     root_ids: Option<Vec<String>>,
     app: tauri::AppHandle,
@@ -158,12 +159,21 @@ async fn scan_disk(
 ) -> Result<Scan, String> {
     let engine = engine.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        engine.scan(extended.unwrap_or(false), root_ids, |p| {
-            let _ = app.emit("scan-progress", p);
-        })
+        engine.scan_with_origin(
+            extended.unwrap_or(false),
+            root_ids,
+            origin.unwrap_or_default(),
+            |p| {
+                let _ = app.emit("scan-progress", p);
+            },
+        )
     })
     .await
     .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn scan_activity(engine: State<'_, Arc<Engine>>) -> Result<core::ScanActivity, String> {
+    engine.scan_activity()
 }
 #[tauri::command]
 async fn list_children(
@@ -352,6 +362,7 @@ pub fn run() {
             inspect_app_residue,
             reveal_residue_candidate,
             scan_disk,
+            scan_activity,
             scan_roots,
             analyze_developer_tools,
             preview_homebrew_cleanup,

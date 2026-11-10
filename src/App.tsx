@@ -30,6 +30,8 @@ import CleanupHistory from "./CleanupHistory";
 import CleanupEvidence from "./CleanupEvidence";
 import ScanCoverage from "./ScanCoverage";
 import ScanAccess from "./ScanAccess";
+import ScanActivity, { scanOriginLabels } from "./ScanActivity";
+import type { ScanOrigin } from "./types";
 import ScanTiming, { ScanWait } from "./ScanTiming";
 import ProjectLedger from "./ProjectLedger";
 import AiData from "./AiData";
@@ -146,6 +148,7 @@ export default function App() {
   );
   const [scanRequest, setScanRequest] = useState<{
     root: string | null;
+    origin?: ScanOrigin;
   } | null>(null);
   const [analysisFolder, setAnalysisFolder] = useState<Item | null>(null);
   const [folderAck, setFolderAck] = useState(false);
@@ -336,10 +339,10 @@ export default function App() {
     catch (e) { setError(errorMessage(e)); }
     finally { setStatus("idle"); }
   }
-  function startScan() {
-    if (desktop && !busy && !browsing) setScanRequest({ root: null });
+  function startScan(origin: ScanOrigin = "cleanup") {
+    if (desktop && !busy && !browsing) setScanRequest({ root: null, origin });
   }
-  async function runScan(extended: boolean, rootIds?: string[]) {
+  async function runScan(extended: boolean, rootIds?: string[], origin: ScanOrigin = "unknown") {
     if (!desktop || busy) return;
     setStatus("scan");
     setNotice("");
@@ -350,7 +353,7 @@ export default function App() {
     setProgress(null);
     setScan(null);
     try {
-      const next = await api.scan(extended, rootIds);
+      const next = await api.scan(extended, rootIds, origin);
       setScan(next);
       const groups = groupCleanup(analyzeCleanup(next.items));
       setCleanupIntent(groups.clean.length ? "clean" : groups.view.length ? "view" : groups.keep.length ? "keep" : "empty");
@@ -618,7 +621,7 @@ export default function App() {
               <button
                 className="button primary"
                 disabled={!desktop || busy || browsing}
-                onClick={startScan}
+                onClick={() => startScan()}
               >
                 {status === "scan" ? (
                   <LoaderCircle size={17} className="spin" />
@@ -726,7 +729,7 @@ export default function App() {
               onCancel={() => void api.cancel().catch((e) => setError(errorMessage(e)))} />
           </div>
           <div hidden={view !== "residue"}><AppResidue onUsage={inspectAppUsage} active={view === "residue"} onPrepareUninstall={prepareUninstall} onExecuteUninstall={executeUninstall} desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={(bundleId, appPath) => void inspectResidue(bundleId, appPath)} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
-          <div hidden={view !== "history"}><CleanupHistory records={history} loading={historyLoading} error={historyError} disabled={!desktop || busy || browsing} onRefresh={() => void readCleanupHistory()} onReview={() => setView("overview")} onRescan={() => { setView("overview"); startScan(); }} /></div>
+          <div hidden={view !== "history"}><CleanupHistory records={history} loading={historyLoading} error={historyError} disabled={!desktop || busy || browsing} onRefresh={() => void readCleanupHistory()} onReview={() => setView("overview")} onRescan={() => { setView("overview"); startScan("history"); }} /></div>
           {view === "overview" ? (
             <>
               {scan && (
@@ -785,6 +788,9 @@ export default function App() {
                 </p>
               )}
               {scan?.extended === true && <p className="scan-root-summary">主要目录：{scan.roots.length ? scan.roots.map((r) => r.name).join("、") : "未选择；仅分析扩展固定／发现项目"}。未选择的位置不代表零占用，范围之间可能重叠。</p>}
+              {scan?.activity && <p className="scan-origin-note">本次请求入口：{scanOriginLabels[scan.activity.origin]} · 后端版本 {scan.activity.appVersion} · {new Date(scan.activity.receivedAt).toLocaleString()}</p>}
+              {scan?.activityWarning && <p className="warning-text" role="alert">{scan.activityWarning}</p>}
+              <ScanActivity disabled={!desktop || busy || browsing} />
               {scan && <ScanTiming scan={scan} />}
               {scan && <ScanCoverage key={`coverage-${scan.id}`} scan={scan} />}
 
@@ -846,7 +852,7 @@ export default function App() {
                 <CleanupResult
                   record={result}
                   disabled={!desktop || busy || browsing}
-                  onRescan={startScan}
+                  onRescan={() => startScan("result")}
                   onReview={() => {
                     showCleanupFilter("all");
                     requestAnimationFrame(() =>
@@ -1397,9 +1403,9 @@ export default function App() {
           root={scanRequest.root}
           onCancel={() => setScanRequest(null)}
           onStart={(extended, rootIds) => {
-            const root = scanRequest.root;
+            const { root, origin } = scanRequest;
             setScanRequest(null);
-            if (root === null) void runScan(extended, rootIds);
+            if (root === null) void runScan(extended, rootIds, origin);
             else void scanProjects(root);
           }}
         />

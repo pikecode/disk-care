@@ -47,7 +47,17 @@ export interface Item {
 export interface ScanTiming {
   id: string; name: string; durationMs: number | null;
 }
+export type ScanOrigin = "cleanup" | "result" | "history" | "unknown";
+export interface ScanActivityEntry {
+  id: string; sessionId: string; appVersion: string; receivedAt: number;
+  finishedAt: number | null; durationMs: number | null; origin: ScanOrigin;
+  extended: boolean; requestedRoots: number | null;
+  status: "received" | "returned" | "cancelled" | "failed";
+}
+export interface ScanActivityReport { sessionId: string; appVersion: string; records: ScanActivityEntry[] }
 export interface Scan {
+  activity?: ScanActivityEntry | null;
+  activityWarning?: string | null;
   timings?: ScanTiming[];
   extended?: boolean;
   id: number;

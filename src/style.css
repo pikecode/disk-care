@@ -4123,3 +4123,11 @@ dialog::backdrop {
 }
 
 .result-card.result-partial p { color: #6f5b3b; }
+
+.scan-activity { margin: 18px 0; padding: 14px 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); font-size: 12px; }
+.scan-activity p { line-height: 1.8; overflow-wrap: anywhere; }
+.scan-activity .button { font-size: 12px; }
+.scan-activity ol { padding-left: 22px; max-height: 400px; overflow-y: auto; }
+.scan-activity li { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.scan-activity code { overflow-wrap: anywhere; }
+.scan-origin-note { font-size: 12px; line-height: 1.8; color: var(--green); }

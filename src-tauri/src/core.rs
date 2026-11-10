@@ -1,3 +1,6 @@
+#[path = "scan_activity.rs"]
+mod scan_activity;
+pub use scan_activity::{ScanActivity, ScanActivityEntry, ScanOrigin};
 #[path = "app_residue.rs"]
 mod app_residue;
 #[path = "dev_tools.rs"]
@@ -122,6 +125,10 @@ pub struct Scan {
     pub cancelled: bool,
     #[serde(default)]
     pub timings: Vec<ScanTiming>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<ScanActivityEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_warning: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -368,6 +375,8 @@ static NEXT_DIRECTORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub struct Engine {
     home: PathBuf,
     history_path: PathBuf,
+    activity_lock: Mutex<()>,
+    activity_session: String,
     scan: Mutex<Option<Scan>>,
     plan: Mutex<Option<Plan>>,
     pub cancel: AtomicBool,
@@ -389,6 +398,8 @@ impl Engine {
         Self {
             history_path: home
                 .join("Library/Application Support/local.diskcare.desktop/history.json"),
+            activity_lock: Mutex::new(()),
+            activity_session: scan_activity::session_id(),
             home,
             scan: Mutex::new(None),
             plan: Mutex::new(None),
@@ -513,6 +524,8 @@ impl Engine {
             measured_roots.push(root);
         }
         let scan = Scan {
+            activity: None,
+            activity_warning: None,
             extended,
             id: now(),
             disk: self.disk()?,
@@ -2239,6 +2252,8 @@ mod tests {
         assert!(engine.prepare(1, vec![item.id.clone()]).is_err());
         let scan_id = now();
         *engine.scan.lock().unwrap() = Some(Scan {
+            activity: None,
+            activity_warning: None,
             extended: false,
             id: scan_id,
             disk: engine.disk().unwrap(),
@@ -3058,6 +3073,8 @@ mod tests {
         item.blocked = None;
         let id = now();
         *engine.scan.lock().unwrap() = Some(Scan {
+            activity: None,
+            activity_warning: None,
             extended: true,
             id,
             disk: engine.disk().unwrap(),

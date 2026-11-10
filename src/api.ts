@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { DeveloperReport, DeveloperPreview, AppUsage, UninstallRecord, UninstallPreview, UninstallResult, AppCatalog, ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
+import type { ScanOrigin, ScanActivityReport, DeveloperReport, DeveloperPreview, AppUsage, UninstallRecord, UninstallPreview, UninstallResult, AppCatalog, ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
 export const desktop = isTauri();
 export const api = {
   developerTools: (ids: string[], selectedId?: string) => invoke<DeveloperReport>("analyze_developer_tools", {ids, selectedId}),
@@ -18,7 +18,8 @@ export const api = {
   aiData: (roots: AiRoot[]) => invoke<AiReport[]>("analyze_ai_data", { roots }),
   disk: () => invoke<Disk>("disk_info"),
   scanRoots: () => invoke<Item[]>("scan_roots"),
-  scan: (extended = false, rootIds?: string[]) => invoke<Scan>("scan_disk", { extended, rootIds }),
+  scan: (extended = false, rootIds?: string[], origin: ScanOrigin = "unknown") => invoke<Scan>("scan_disk", { extended, rootIds, origin }),
+  scanActivity: () => invoke<ScanActivityReport>("scan_activity"),
   revealApp: () => invoke<string>("reveal_current_app"),
   privacySettings: () => invoke<void>("open_privacy_settings"),
   cancel: () => invoke<void>("cancel_scan"),
