@@ -86,7 +86,8 @@ async (page) => {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button", { name: "项目账本", exact: true }).click();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
+  await page.getByRole("button", { name: "项目空间", exact: true }).click();
   await page.getByRole("button", { name: "扫描项目", exact: true }).click();
   await page
     .getByRole("checkbox", { name: "我已了解范围与权限要求，继续扫描" })

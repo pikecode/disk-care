@@ -1,8 +1,17 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
+import type { DeveloperReport, DeveloperPreview, AppUsage, UninstallRecord, UninstallPreview, UninstallResult, AppCatalog, ResidueReport, AiReport, AiRoot, Disk, Item, Listing, Plan, ProjectReport, Record, Scan } from "./types";
 export const desktop = isTauri();
 export const api = {
-  inspectResidue: () => invoke<ResidueReport>("inspect_app_residue", { preset: "cc-switch" }),
+  developerTools: (ids: string[], selectedId?: string) => invoke<DeveloperReport>("analyze_developer_tools", {ids, selectedId}),
+  previewHomebrew: () => invoke<DeveloperPreview>("preview_homebrew_cleanup"),
+  chooseAnalysisDirectory: () => invoke<Item | null>("choose_analysis_directory"),
+  appUsage: (path: string, bundleId: string) => invoke<AppUsage>("app_usage", { path, bundleId }),
+  appIcon: (path: string, bundleId: string) => invoke<string | null>("app_icon", { path, bundleId }),
+  uninstallHistory: () => invoke<UninstallRecord[]>("app_uninstall_history"),
+  prepareUninstall: (path: string, bundleId: string) => invoke<UninstallPreview>("prepare_app_uninstall", { path, bundleId }),
+  executeUninstall: (token: number) => invoke<UninstallResult>("execute_app_uninstall", { token }),
+  installedApps: () => invoke<AppCatalog>("installed_apps"),
+  inspectResidue: (bundleId: string | null, appPath?: string) => invoke<ResidueReport>("inspect_app_residue", appPath ? { appPath, bundleId } : bundleId === null ? { preset: "cc-switch" } : { bundleId }),
   revealResidue: (reportId: number, candidateId: number) => invoke<void>("reveal_residue_candidate", { reportId, candidateId }),
   revealFile: (id: string, relative: string, measuredAt: number) =>
     invoke<void>("reveal_observed_file", { id, relative, measuredAt }),

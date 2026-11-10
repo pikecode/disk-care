@@ -105,7 +105,7 @@ async (page) => {
     };
   });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.getByRole("button", { name: "开始检查", exact: true }).click();
   await page
     .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
     .check();
@@ -126,16 +126,12 @@ async (page) => {
       .count()
   )
     throw new Error("目标输入必须移除");
-  if ((await panel.locator(".analysis-candidates article").count()) !== 1)
+  if ((await page.getByRole("button",{name:"预览npm 下载缓存清理",exact:true}).count()) !== 1)
     throw new Error("只能开放 npm，不能凑目标扩大范围");
-  await page
-    .locator(".metric-card")
-    .getByText("2.0 GiB", { exact: true })
-    .waitFor();
   if (
     !(
       await panel
-        .getByRole("button", { name: "查看可预览缓存", exact: true })
+        .getByRole("button", { name: "可以清理", exact: true })
         .locator("strong")
         .innerText()
     ).startsWith("1")
@@ -143,14 +139,15 @@ async (page) => {
     throw new Error("分类应显示数量而不重复占用");
   if (await page.getByRole("checkbox", { checked: true }).count())
     throw new Error("默认不勾选");
+  await panel.getByRole("button",{name:"需要保留",exact:true}).click();
   if (
     await page
       .getByRole("checkbox", { name: "选择uv 缓存", exact: true })
       .isEnabled()
   )
     throw new Error("原清单必须同步禁止受阻项");
-  await panel.locator("summary").filter({ hasText: "处理阻碍" }).click();
-  await panel.getByText("PID 77 正在使用缓存", { exact: false }).waitFor();
+  await page.locator(".item-row").getByText("PID 77 正在使用缓存", { exact: false }).waitFor();
+  await panel.getByRole("button",{name:"可以清理",exact:true}).click();
   await page.setViewportSize({ width: 960, height: 820 });
   if (
     await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
@@ -159,7 +156,7 @@ async (page) => {
   await panel.screenshot({
     path: "output/playwright/cleanup-analysis-060.png",
   });
-  const preview = panel.getByRole("button", {
+  const preview = page.getByRole("button", {
     name: "预览npm 下载缓存清理",
     exact: true,
   });
@@ -196,7 +193,7 @@ async (page) => {
     }, mode);
     await page
       .locator(".page-heading")
-      .getByRole("button", { name: /扫描/ })
+      .getByRole("button", { name: /检查/ })
       .click();
     await page
       .getByRole("button", { name: /开始(常规|扩展)扫描/, exact: true })
@@ -208,7 +205,7 @@ async (page) => {
     else {
       await panel.getByText("扫描已超过 30 分钟", { exact: false }).waitFor();
       if (
-        await panel
+        await page
           .getByRole("button", { name: "预览npm 下载缓存清理", exact: true })
           .isEnabled()
       )

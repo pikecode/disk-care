@@ -96,12 +96,14 @@ async (page) => {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button", { name: "项目账本", exact: true }).click();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
+  await page.getByRole("button", { name: "项目空间", exact: true }).click();
   await page.getByRole("button", { name: "扫描项目", exact: true }).click();
   await page
     .getByRole("checkbox", { name: "我已了解范围与权限要求，继续扫描" })
     .check();
   await page.getByRole("button", { name: "开始项目扫描", exact: true }).click();
+  await page.getByRole("button",{name:"关系图",exact:true}).click();
   const graph = page.getByRole("region", {
     name: "项目直接关系图",
     exact: true,
@@ -178,8 +180,8 @@ async (page) => {
     path: "output/playwright/relationships-040-min.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "账本列表", exact: true }).click();
-  if ((await page.locator(".project-card").count()) !== 2)
+  await page.getByRole("button", { name: "项目列表", exact: true }).click();
+  if ((await page.locator(".project-object-row").count()) !== 2)
     throw new Error("账本列表必须保留");
   await page.getByRole("button", { name: "关系图", exact: true }).click();
   await page.evaluate(() => {

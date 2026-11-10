@@ -206,10 +206,43 @@ export interface AiReport {
   items: AiItem[];
 }
 
+export interface AppCatalog { apps: { path: string; name: string; bundleId: string; version?: string | null }[]; coverage: Coverage }
 export interface ResidueReport {
+  identitySource?: string;
+  ruleVersion?: number;
+  targetAppPath?: string | null;
+  target: string;
   id: number; measuredAt: number;
-  sources: { name: string; path: string; coverage: Coverage; candidates: {
+  sources: { impact?: string; name: string; path: string; coverage: Coverage; candidates: {
     id: number; path: string; category: string; evidence: string;
     allocatedBytes: number; logicalBytes: number; cleanupEligible: false;
   }[] }[];
 }
+
+export interface UninstallPreview {
+  token: number;
+  name: string;
+  path: string;
+  bundleId: string;
+  expiresAt: number;
+  before?: AssociationSnapshot | null;
+}
+export interface UninstallResult {
+  name: string;
+  path: string;
+  bundleId: string;
+  trashPath: string | null;
+  warning?: string | null;
+  at?: number;
+  before?: AssociationSnapshot | null;
+}
+
+export interface UninstallRecord { at: number; name: string; path: string; bundleId: string; success: boolean; message: string; before?: AssociationSnapshot | null }
+
+export interface AssociationSnapshot { ruleVersion: number; measuredAt: number; sources: { name: string; path: string; status: string; present: boolean; allocatedBytes: number | null }[] }
+
+export interface AppUsage { path: string; bundleId: string; measuredAt: number; allocatedBytes: number; entries: number; coverage: Coverage }
+
+export interface DeveloperEntry { tool: string; name: string; path: string | null; kind: string; basis: string; impact: string; allocatedBytes: number | null; entries: number | null; coverage: Coverage }
+export interface DeveloperReport { measuredAt: number; entries: DeveloperEntry[]; notes: string[] }
+export interface DeveloperPreview { measuredAt: number; executable: string; output: string; truncated: boolean }

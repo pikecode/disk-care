@@ -17,7 +17,7 @@ async (page) => {
         if (cmd.startsWith("plugin:event|")) return 1;
         if (cmd === "disk_info") return disk;
         if (cmd === "cleanup_history") return [];
-        if (cmd === "scan_disk") return { id: 1, disk, durationMs: 1, cancelled: false, extended: false, roots: [], items: [item] };
+        if (cmd === "scan_disk") return { id: Date.now(), disk, durationMs: 1, cancelled: false, extended: false, roots: [], items: [item] };
         if (cmd === "prepare_cleanup") return { token: 1, createdAt: Date.now(), estimated: item.bytes, items: [item] };
         if (cmd === "execute_cleanup") {
           const modes = {
@@ -36,7 +36,7 @@ async (page) => {
   await page.setViewportSize({ width: 960, height: 760 });
   await page.goto("http://127.0.0.1:1420");
   async function scan() {
-    await page.getByRole("button", { name: /^(开始扫描|重新扫描)$/ }).first().click();
+    await page.getByRole("button", { name: /^(开始检查|重新检查)$/ }).first().click();
     const dialog = page.getByRole("dialog");
     const ack = dialog.getByRole("checkbox", { name: "我已了解范围与权限要求，继续扫描" });
     if (await ack.count()) await ack.check();
@@ -51,9 +51,9 @@ async (page) => {
     const dialog = page.getByRole("dialog", { name: "确认这次清理" });
     await dialog.getByRole("checkbox").check();
     await dialog.getByRole("button", { name: "确认清理", exact: true }).click();
-    await page.locator(".result-card").waitFor();
+    await page.getByRole("region", { name: "本次清理结果", exact: true }).waitFor();
   }
-  const card = page.locator(".result-card");
+  const card = page.getByRole("region", { name: "本次清理结果", exact: true });
   const count = async (n) => {
     if (await card.locator(".cleanup-outcome").count() !== n) throw new Error(`结果项数量应为 ${n}`);
   };
@@ -78,7 +78,7 @@ async (page) => {
   if (await page.evaluate(() => window.calls.length) !== before) throw new Error("筛选或导航触发了 IPC");
   if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error("960px 页面横向溢出");
   await page.screenshot({ path: "output/playwright/cleanup-results-m1.png", fullPage: true });
-  await card.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await card.getByRole("button", { name: "重新检查", exact: true }).click();
   await page.getByRole("dialog").waitFor();
   if (await page.evaluate(() => window.calls.length) !== before) throw new Error("扫描范围尚未确认就执行了扫描");
   await page.keyboard.press("Escape");

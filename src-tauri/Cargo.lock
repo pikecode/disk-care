@@ -599,9 +599,12 @@ dependencies = [
 
 [[package]]
 name = "disk-care"
-version = "0.9.10"
+version = "0.9.32"
 dependencies = [
  "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",
@@ -1913,6 +1916,7 @@ dependencies = [
  "block2",
  "objc2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
  "objc2-quartz-core",
 ]

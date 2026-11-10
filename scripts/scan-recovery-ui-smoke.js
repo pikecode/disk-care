@@ -68,7 +68,7 @@ async (page) => {
     };
   });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.getByRole("button", { name: "开始检查", exact: true }).click();
   await page
     .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
     .check();
@@ -106,7 +106,7 @@ async (page) => {
       window.mode = m;
     }, mode);
     await page
-      .getByRole("button", { name: "重新扫描", exact: true })
+      .getByRole("button", { name: "重新检查", exact: true })
       .first()
       .click();
     await page

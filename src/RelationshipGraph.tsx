@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { ArrowLeft, Box, Folder, Network, Terminal } from "lucide-react";
 import { bytes } from "./format";
 import { edgeLabels, projectId, relationships } from "./relationships";
@@ -24,9 +24,11 @@ function subtitle(node: RelationNode) {
 export default function RelationshipGraph({
   report,
   initialProjectPath,
+  onProject,
 }: {
   report: ProjectReport;
   initialProjectPath?: string;
+  onProject?: (path: string) => void;
 }) {
   const graph = useMemo(() => relationships(report), [report]);
   const [projectPath, setProjectPath] = useState(
@@ -51,8 +53,15 @@ export default function RelationshipGraph({
   const filtered = report.projects.filter((p) =>
     `${p.name} ${p.path}`.toLowerCase().includes(query.toLowerCase()),
   );
+  useEffect(() => {
+    if (initialProjectPath !== undefined && initialProjectPath !== projectPath && report.projects.some(p => p.path === initialProjectPath)) {
+      setProjectPath(initialProjectPath); setFocusId(projectId(initialProjectPath)); setEdgeId(null); setLimit(12); setQuery(""); setProjectLimit(50);
+    }
+  }, [initialProjectPath, report, projectPath]);
   const selectedEdge = graph.edges.find((e) => e.id === edgeId);
   const selectNode = (id: string) => {
+    const project = graph.nodes.get(id)?.project;
+    if (project) { setProjectPath(project.path); onProject?.(project.path); }
     setFocusId(id);
     setEdgeId(null);
     setLimit(12);

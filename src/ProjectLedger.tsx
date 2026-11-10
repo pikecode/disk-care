@@ -9,6 +9,7 @@ import {
 import { bytes } from "./format";
 import RelationshipGraph from "./RelationshipGraph";
 import SpaceMap from "./SpaceMap";
+import { projectSpaces } from "./spaceLayout";
 import ModelStorage from "./ModelStorage";
 import type { Progress, ProjectReport } from "./types";
 
@@ -36,7 +37,7 @@ export default function ProjectLedger({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("全部");
   const [visible, setVisible] = useState(50);
-  const [display, setDisplay] = useState<"graph" | "ledger" | "map">("graph");
+  const [display, setDisplay] = useState<"graph" | "ledger" | "map">("ledger");
   const [relationProject, setRelationProject] = useState<string | undefined>();
   useEffect(() => {
     setVisible(50);
@@ -50,6 +51,17 @@ export default function ProjectLedger({
             ? p.evidence.some((e) => e.kind === "process")
             : p.languages.includes(filter))),
     ) ?? [];
+  const visibleProjects = projects.slice(0, visible);
+  const observations = new Map((report ? projectSpaces(report) : []).map(item => [item.project!.path, item]));
+  const selectedProject = visibleProjects.find(p => p.path === relationProject) ?? visibleProjects[0];
+  useEffect(() => { setRelationProject(report?.projects[0]?.path); }, [report?.root, report?.measuredAt]);
+  useEffect(() => {
+    if (display === "ledger" && visibleProjects.length && !visibleProjects.some(p => p.path === relationProject)) setRelationProject(visibleProjects[0].path);
+  }, [display, query, filter, visible, report, relationProject]);
+  function chooseProject(path: string) {
+    setRelationProject(path);
+    if (!visibleProjects.some(p => p.path === path)) { setQuery(path); setFilter("全部"); setVisible(50); }
+  }
   const artifacts =
     report?.projects.reduce((n, p) => n + p.artifacts.length, 0) ?? 0;
   const signals =
@@ -160,7 +172,7 @@ export default function ProjectLedger({
               {warning}
             </p>
           ))}
-          <ModelStorage key={`${report.root}:${report.measuredAt}`} report={report} onProject={(path) => {setRelationProject(path);setDisplay("graph");requestAnimationFrame(() => {
+          <ModelStorage key={`${report.root}:${report.measuredAt}`} report={report} onProject={(path) => {chooseProject(path);setDisplay("graph");requestAnimationFrame(() => {
               const view = document.querySelector<HTMLElement>(".relationship-view");
               view?.scrollIntoView({block: "start"});
               view?.focus({preventScroll: true});
@@ -235,7 +247,7 @@ export default function ProjectLedger({
               aria-pressed={display === "ledger"}
               onClick={() => setDisplay("ledger")}
             >
-              账本列表
+              项目列表
             </button>
             <span>地图找大项，关系看影响。</span>
           </div>
@@ -243,16 +255,19 @@ export default function ProjectLedger({
             <SpaceMap
               key={`${report.root}:${report.measuredAt}`}
               report={report}
+              initialProjectPath={relationProject}
+              onProject={chooseProject}
               onRelations={(path) => {
-                setRelationProject(path);
+                chooseProject(path);
                 setDisplay("graph");
               }}
             />
           ) : display === "graph" ? (
             <RelationshipGraph
-              key={`${report.root}:${report.measuredAt}:${relationProject ?? ""}`}
+              key={`${report.root}:${report.measuredAt}`}
               report={report}
               initialProjectPath={relationProject}
+              onProject={chooseProject}
             />
           ) : (
             <>
@@ -277,9 +292,13 @@ export default function ProjectLedger({
                   )}
                 </div>
               </div>
-              <div className="project-cards">
-                {projects.slice(0, visible).map((p) => (
-                  <article className="project-card" key={p.path}>
+              <p className="scope-note">列表仅显示已识别产物占用，不含源码与共享资源，也不代表可释放空间。</p>
+              <div className="object-workspace project-objects"><div className="object-list" aria-label="项目对象列表">{visibleProjects.map(p => {
+                  const observation = observations.get(p.path)!;
+                  return <button key={p.path} className="object-row project-object-row" aria-label={`选择项目 ${p.name}`} aria-pressed={p.path === selectedProject?.path} onClick={() => setRelationProject(p.path)}><span><strong>{p.name}</strong><small>{p.path || "."} · {p.languages.join(" / ")} · {p.artifacts.length}项产物</small></span><strong title="仅已识别产物，不包含源码与共享数据">{!p.artifacts.length ? "未发现产物" : !observation.complete && !observation.bytes ? "未统计" : `${observation.complete ? "" : "≥ "}${bytes(observation.bytes)}`}</strong></button>;
+                })}</div><div>
+                {selectedProject && [selectedProject].map((p) => (
+                  <article className="project-card object-detail" aria-label="项目对象详情" key={p.path}><div className="project-object-actions"><button className="text-button" onClick={() => {setRelationProject(p.path);setDisplay("graph");}}>查看此项目关系</button><button className="text-button" onClick={() => {setRelationProject(p.path);setDisplay("map");}}>在地图中查看</button></div>
                     <header>
                       <span className="project-folder">
                         <Folder size={22} />
@@ -345,7 +364,7 @@ export default function ProjectLedger({
                     </details>
                   </article>
                 ))}
-              </div>
+              </div></div>
               {projects.length > visible && (
                 <button
                   className="button secondary ledger-load"

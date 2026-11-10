@@ -2,13 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { version as appVersion } from "../package.json";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
   Check,
   ChevronRight,
   CircleHelp,
-  Clock3,
   Database,
   FileBox,
   Folder,
@@ -27,15 +25,18 @@ import {
   X,
 } from "lucide-react";
 import { api, desktop } from "./api";
-import CleanupOutcome, { CleanupResult, SpaceChange } from "./CleanupOutcome";
+import { CleanupResult } from "./CleanupOutcome";
+import CleanupHistory from "./CleanupHistory";
 import CleanupEvidence from "./CleanupEvidence";
 import ScanCoverage from "./ScanCoverage";
 import ScanAccess from "./ScanAccess";
 import ScanTiming, { ScanWait } from "./ScanTiming";
 import ProjectLedger from "./ProjectLedger";
 import AiData from "./AiData";
+import DeveloperTools from "./DeveloperTools";
 import AppResidue from "./AppResidue";
 import type { ResidueReport } from "./types";
+import SpaceHome from "./SpaceHome";
 import ObservationOverview from "./ObservationOverview";
 import DirectoryInsights from "./DirectoryInsights";
 import CleanupAnalysis from "./CleanupAnalysis";
@@ -43,8 +44,9 @@ import {
   analyzeCleanup,
   cleanupAdvice,
   cleanupLabels,
+  groupCleanup,
 } from "./cleanupEligibility";
-import type { CleanupFilter } from "./cleanupEligibility";
+import type { CleanupFilter, CleanupIntent } from "./cleanupEligibility";
 import type {
   AiReport,
   AiRoot,
@@ -139,19 +141,21 @@ const previewItems: Item[] = [
 ];
 
 export default function App() {
-  const [view, setView] = useState<"overview" | "projects" | "ai" | "residue" | "history">(
+  const [view, setView] = useState<"overview" | "space" | "projects" | "ai" | "residue" | "developer" | "history">(
     "overview",
   );
   const [scanRequest, setScanRequest] = useState<{
     root: string | null;
   } | null>(null);
+  const [analysisFolder, setAnalysisFolder] = useState<Item | null>(null);
+  const [folderAck, setFolderAck] = useState(false);
   const [residueReport, setResidueReport] = useState<ResidueReport | null>(null);
   const [aiBaselines, setAiBaselines] = useState<AiReport[]>([]);
   const [aiReports, setAiReports] = useState<AiReport[] | null>(null);
   const [disk, setDisk] = useState<Disk | null>(null);
   const [scan, setScan] = useState<Scan | null>(null);
   const [status, setStatus] = useState<
-    "idle" | "scan" | "projects" | "ai" | "residue" | "prepare" | "clean" | "protect"
+    "idle" | "developer" | "developer-preview" | "choose" | "scan" | "projects" | "ai" | "residue" | "usage" | "uninstall" | "prepare" | "clean" | "protect"
   >("idle");
   const [projectReport, setProjectReport] = useState<ProjectReport | null>(
     null,
@@ -159,12 +163,23 @@ export default function App() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [category, setCategory] = useState("全部");
   const [cleanupFilter, setCleanupFilter] = useState<CleanupFilter>("all");
+  const [cleanupIntent, setCleanupIntent] = useState<CleanupIntent>("all");
+  const [scanTime, setScanTime] = useState(Date.now());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [plan, setPlan] = useState<Plan | null>(null);
   const [ack, setAck] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [history, setHistory] = useState<CleanRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  async function readCleanupHistory() {
+    if (!desktop) return;
+    setHistoryLoading(true); setHistoryError("");
+    try { setHistory(await api.history()); }
+    catch (e) { setHistoryError(errorMessage(e)); }
+    finally { setHistoryLoading(false); }
+  }
   const [result, setResult] = useState<CleanRecord | null>(null);
   const [browse, setBrowse] = useState<(Omit<Listing, "items"> & {
     item: Item;
@@ -179,13 +194,20 @@ export default function App() {
   const modalRef = useRef<HTMLDialogElement>(null);
   const browserRef = useRef<HTMLDialogElement>(null);
   const inventoryRef = useRef<HTMLElement>(null);
+  const isSpace = ["space", "projects", "developer", "ai"].includes(view);
+  const pageTitle = view === "overview" ? "清理" : view === "space" ? "空间" : view === "projects" ? "项目空间" : view === "developer" ? "开发工具" : view === "ai" ? "AI 数据" : view === "residue" ? "应用" : "清理记录";
+  const backgroundTask = status === "ai" && view !== "ai" ? { label: "AI 数据正在分析", target: "ai" as const, name: "AI 数据", cancel: true }
+    : (status === "developer" || status === "developer-preview") && view !== "developer" ? { label: status === "developer-preview" ? "正在读取 Homebrew 预览" : "开发工具正在检查", target: "developer" as const, name: "开发工具", cancel: status !== "developer-preview" }
+    : status === "projects" && view !== "projects" ? { label: "项目空间正在分析", target: "projects" as const, name: "项目空间", cancel: true }
+    : (status === "residue" || status === "usage" || status === "uninstall") && view !== "residue" ? { label: status === "uninstall" ? "应用操作正在进行" : "应用正在检查", target: "residue" as const, name: "应用", cancel: status !== "uninstall" } : null;
   const busy = status !== "idle";
   const items = scan?.items ?? [];
   const analysis = analyzeCleanup(items);
+  const intentions = groupCleanup(analysis);
+  const scanExpired = !!scan && scanTime - scan.id > 30 * 60 * 1000;
   const eligible = analysis.available;
   const selectedItems = eligible.filter((i) => selected.has(i.id));
   const selectedBytes = selectedItems.reduce((n, i) => n + i.bytes, 0);
-  const candidateBytes = eligible.reduce((n, i) => n + i.bytes, 0);
   const rootBytes = scan?.roots.reduce((n, i) => n + i.bytes, 0) ?? 0;
   const rootsPartial =
     scan?.roots.some((i) => !i.complete || i.issues > 0) ?? false;
@@ -194,7 +216,7 @@ export default function App() {
     disk && used + disk.available > 0
       ? Math.ceil((used / (used + disk.available)) * 100)
       : 0;
-  const shown = (cleanupFilter === "all" ? items : analysis[cleanupFilter])
+  const shown = (cleanupFilter !== "all" ? analysis[cleanupFilter] : cleanupIntent === "all" ? items : intentions[cleanupIntent])
     .filter((i) => category === "全部" || category === i.category)
     .sort((a, b) => b.bytes - a.bytes);
   const visibleEligible = shown.filter((item) => eligible.includes(item));
@@ -203,11 +225,22 @@ export default function App() {
     visibleEligible.filter((item) => selected.has(item.id)).length;
   function showCleanupFilter(filter: CleanupFilter) {
     setCleanupFilter(filter);
+    setCleanupIntent("all");
     setCategory("全部");
     requestAnimationFrame(() =>
       inventoryRef.current?.scrollIntoView({ block: "start" }),
     );
   }
+
+  function showCleanupIntent(intent: CleanupIntent) {
+    setCleanupIntent(intent); setCleanupFilter("all"); setCategory("全部");
+  }
+  useEffect(() => {
+    if (!scan || view !== "overview") return;
+    setScanTime(Date.now());
+    const timer = window.setInterval(() => setScanTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [scan?.id, view]);
 
   useEffect(() => {
     if (!desktop) return;
@@ -215,10 +248,7 @@ export default function App() {
       .disk()
       .then(setDisk)
       .catch((e) => setError(errorMessage(e)));
-    void api
-      .history()
-      .then(setHistory)
-      .catch((e) => setError(errorMessage(e)));
+    void readCleanupHistory();
     let disposed = false;
     const stops: (() => void)[] = [];
     for (const event of [
@@ -250,7 +280,7 @@ export default function App() {
   }, [browse]);
   useEffect(() => {
     const close = (event: BeforeUnloadEvent) => {
-      if (status === "clean") {
+      if (status === "clean" || status === "uninstall") {
         event.preventDefault();
       }
     };
@@ -258,10 +288,51 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", close);
   }, [status]);
 
-  async function inspectResidue() {
+  async function inspectResidue(bundleId: string | null, appPath?: string) {
     if (!desktop || busy || browsing) return;
     setStatus("residue"); setError(""); setResidueReport(null);
-    try { setResidueReport(await api.inspectResidue()); }
+    try { setResidueReport(await api.inspectResidue(bundleId, appPath)); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setStatus("idle"); }
+  }
+  async function inspectAppUsage(path: string, bundleId: string) {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("usage");
+    try { return await api.appUsage(path, bundleId); }
+    finally { setStatus("idle"); }
+  }
+  async function prepareUninstall(path: string, bundleId: string) {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("uninstall");
+    try { return await api.prepareUninstall(path, bundleId); }
+    finally { setStatus("idle"); }
+  }
+  async function executeUninstall(token: number) {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("uninstall");
+    try {
+      const outcome = await api.executeUninstall(token);
+      setResidueReport(null);
+      setNotice(`${outcome.name} 已移到废纸篓，关联数据已保留。`);
+      return outcome;
+    } finally { setStatus("idle"); }
+  }
+  async function analyzeDeveloperTools(ids: string[], selectedId?: string) {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("developer");
+    try { return await api.developerTools(ids, selectedId); }
+    finally { setStatus("idle"); }
+  }
+  async function previewHomebrew() {
+    if (!desktop || busy || browsing) throw new Error("已有任务正在执行");
+    setStatus("developer-preview");
+    try { return await api.previewHomebrew(); }
+    finally { setStatus("idle"); }
+  }
+  async function chooseAnalysisFolder() {
+    if (!desktop || busy || browsing) return;
+    setStatus("choose"); setError(""); setFolderAck(false);
+    try { const folder = await api.chooseAnalysisDirectory(); if (folder) setAnalysisFolder(folder); }
     catch (e) { setError(errorMessage(e)); }
     finally { setStatus("idle"); }
   }
@@ -281,6 +352,9 @@ export default function App() {
     try {
       const next = await api.scan(extended, rootIds);
       setScan(next);
+      const groups = groupCleanup(analyzeCleanup(next.items));
+      setCleanupIntent(groups.clean.length ? "clean" : groups.view.length ? "view" : groups.keep.length ? "keep" : "empty");
+      setScanTime(Date.now());
       setDisk(next.disk);
     } catch (e) {
       setError(errorMessage(e));
@@ -318,6 +392,7 @@ export default function App() {
   }
   async function prepareItems(ids: string[]) {
     if (!scan || ids.length === 0 || busy || browsing) return;
+    if (Date.now() - scan.id > 30 * 60 * 1000) { setScanTime(Date.now()); setNotice("检查结果已过期，请重新检查后预览。"); return; }
     if (ids.some((id) => !eligible.some((item) => item.id === id))) return;
     setSelected(new Set(ids));
     setStatus("prepare");
@@ -483,42 +558,13 @@ export default function App() {
         </div>
         <div className="workspace-label">本机工作空间</div>
         <nav aria-label="主导航">
-          <button
-            className={view === "overview" ? "nav active" : "nav"}
-            onClick={() => setView("overview")}
-          >
-            <HardDrive size={18} />
-            空间概览
-            <ChevronRight size={14} />
-          </button>
-          <button
-            className={view === "projects" ? "nav active" : "nav"}
-            onClick={() => setView("projects")}
-          >
-            <Folder size={18} />
-            项目账本
-            <ChevronRight size={14} />
-          </button>
-          <button className={view === "ai" ? "nav active" : "nav"} onClick={() => setView("ai")}>
-            <Sparkles size={18} />AI 工作数据<ChevronRight size={14} />
-          </button>
-          <button className={view === "residue" ? "nav active" : "nav"} onClick={() => setView("residue")}><Package size={18} />应用残留检查<ChevronRight size={14} /></button>
-          <button
-            className={view === "history" ? "nav active" : "nav"}
-            onClick={() => setView("history")}
-          >
-            <History size={18} />
-            清理记录<span className="nav-count">{history.length}</span>
-          </button>
+          <button className={view === "overview" ? "nav active" : "nav"} aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}><Sparkles size={18} />清理</button>
+          <button className={isSpace ? "nav active" : "nav"} aria-current={isSpace ? "page" : undefined} onClick={() => setView("space")}><HardDrive size={18} />空间</button>
+          <button className={view === "residue" ? "nav active" : "nav"} aria-current={view === "residue" ? "page" : undefined} onClick={() => setView("residue")}><Package size={18} />应用</button>
         </nav>
+        <button className={`nav history-entry${view === "history" ? " active" : ""}`} aria-current={view === "history" ? "page" : undefined} onClick={() => setView("history")}><History size={17} />清理记录<span className="nav-count">{history.length}</span></button>
         <div className="sidebar-note">
           <ShieldCheck size={21} />
-          <strong>每一步，都由你决定</strong>
-          <p>
-            本地分析，明确影响。
-            <br />
-            查看计划后，再执行清理。
-          </p>
           <div className="local-dot">
             <i />
             数据留在本机
@@ -533,11 +579,7 @@ export default function App() {
         <header className="topbar">
           <span>
             工作空间 <ChevronRight size={13} />{" "}
-            {view === "overview"
-              ? "空间概览"
-              : view === "projects"
-                ? "项目账本"
-                : view === "ai" ? "AI 工作数据" : view === "residue" ? "应用残留检查" : "清理记录"}
+            {isSpace && view !== "space" ? `空间 / ${pageTitle}` : pageTitle}
           </span>
           <div>
             <span className="tiny-dot" />
@@ -562,26 +604,14 @@ export default function App() {
           )}
           <div className="page-heading">
             <div>
-              <div className="eyebrow">
-                {view === "overview"
-                  ? "磁盘分析"
-                  : view === "projects"
-                    ? "项目分析"
-                    : view === "ai" ? "只读数据账本" : view === "residue" ? "只读关联线索" : "操作记录"}
-              </div>
-              <h1>
-                {view === "overview"
-                  ? "磁盘空间"
-                  : view === "projects"
-                    ? "项目空间"
-                    : view === "ai" ? "AI 工作数据" : view === "residue" ? "应用残留检查" : "清理记录"}
-              </h1>
+              <h1>{pageTitle}</h1>
               <p>
                 {view === "overview"
-                  ? "先扫描查看占用，再预览需要清理的内容。"
+                  ? "检查缓存，再选择需要清理的内容。"
+                  : view === "space" ? "找到空间用在哪里，再决定如何处理。"
                   : view === "projects"
-                    ? "查看项目产物、模型引用与运行依赖。"
-                    : view === "ai" ? "了解 AI 工具的数据占用、保护依据与处理影响。" : view === "residue" ? "先看关联依据与覆盖范围，不将候选当作可删除项。" : "查看执行结果与磁盘可用空间变化，最多保留最近 100 次。"}
+                    ? "查看项目的构建文件和依赖占用。"
+                    : view === "developer" ? "查看哪些开发工具占用了空间。" : view === "ai" ? "查看 AI 工具的数据占用，识别需要保留的资料。" : view === "residue" ? "查找应用占用，检查关联文件或卸载应用。" : "查看执行结果与磁盘可用空间变化，最多保留最近 100 次。"}
               </p>
             </div>
             {view === "overview" && (
@@ -596,14 +626,14 @@ export default function App() {
                   <ScanLine size={17} />
                 )}
                 {status === "scan"
-                  ? "正在扫描"
-                  : scan
-                    ? "重新扫描"
-                    : "开始扫描"}
+                  ? "正在检查"
+                  : scan || result
+                    ? "重新检查"
+                    : "开始检查"}
               </button>
             )}
           </div>
-          {view === "overview" && (
+          {view === "overview" && scan && (
             <ol className="workflow-steps" aria-label="操作步骤">
               {["扫描空间", "查看结果", "确认清理"].map((label, index) => {
                 const current =
@@ -673,29 +703,44 @@ export default function App() {
               />
             </div>
           )}
-          {status === "projects" && view !== "projects" && (
-            <div className="project-status" role="status">
-              <LoaderCircle size={18} className="spin" />
-              <span>项目扫描仍在进行，可返回项目账本查看进度。</span>
-              <button
-                className="text-button"
-                onClick={() => setView("projects")}
-              >
-                查看项目扫描
-              </button>
-              <button
-                className="text-button"
-                onClick={() =>
-                  void api.cancel().catch((e) => setError(errorMessage(e)))
-                }
-              >
-                停止项目扫描
-              </button>
-            </div>
-          )}
+          {backgroundTask && <div className="background-task" role="status" aria-label="进行中的任务"><LoaderCircle size={17} className="spin" /><div><strong>{backgroundTask.label}</strong><span>任务仍在进行，切换页面不会重新开始。</span></div><button className="button secondary" onClick={() => setView(backgroundTask.target)}>返回{backgroundTask.name}</button>{backgroundTask.cancel && <button className="text-button" onClick={() => void api.cancel().catch(e => setError(errorMessage(e)))}>停止分析</button>}</div>}
+          {isSpace && <nav className="space-categories" aria-label="空间分类">{([["space", "文件夹"], ["developer", "开发工具"], ["projects", "项目空间"], ["ai", "AI 数据"]] as const).map(([id, name]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{name}</button>)}</nav>}
+          <div hidden={view !== "developer"}><DeveloperTools desktop={desktop} busy={busy || browsing} folder={analysisFolder} onChoose={() => void chooseAnalysisFolder()} onAnalyze={analyzeDeveloperTools} onPreview={previewHomebrew} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
+          <div hidden={view !== "projects"}>
+            <ProjectLedger
+              desktop={desktop}
+              busy={busy || browsing}
+              scanning={status === "projects"}
+              progress={progress}
+              report={projectReport}
+              onScan={(root) => setScanRequest({ root })}
+              onCancel={() =>
+                void api.cancel().catch((e) => setError(errorMessage(e)))
+              }
+              onCaches={() => setView("overview")}
+            />
+          </div>
+          <div hidden={view !== "ai"}>
+            <AiData desktop={desktop} busy={busy || browsing} scanning={status === "ai"}
+              reports={aiReports} baselines={aiBaselines} onBaseline={(report) => setAiBaselines((previous) => [...previous.filter((b) => b.tool !== report.tool || b.root !== report.root), report])} onAnalyze={(roots) => void analyzeAi(roots)}
+              onCancel={() => void api.cancel().catch((e) => setError(errorMessage(e)))} />
+          </div>
+          <div hidden={view !== "residue"}><AppResidue onUsage={inspectAppUsage} active={view === "residue"} onPrepareUninstall={prepareUninstall} onExecuteUninstall={executeUninstall} desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={(bundleId, appPath) => void inspectResidue(bundleId, appPath)} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} /></div>
+          <div hidden={view !== "history"}><CleanupHistory records={history} loading={historyLoading} error={historyError} disabled={!desktop || busy || browsing} onRefresh={() => void readCleanupHistory()} onReview={() => setView("overview")} onRescan={() => { setView("overview"); startScan(); }} /></div>
           {view === "overview" ? (
             <>
-              <section className="stats-grid" aria-label="磁盘容量">
+              {scan && (
+                <CleanupAnalysis
+                  key={scan.id}
+                  scan={scan}
+                  disabled={!desktop || busy || browsing}
+                  expired={scanExpired}
+                  activeIntent={cleanupIntent}
+                  onIntent={showCleanupIntent}
+                />
+              )}
+              <details className={`cleanup-capacity-detail${scan ? "" : " initial"}`} open={scan ? undefined : true}><summary>磁盘剩余 {disk ? bytes(disk.available) : "待检查"} · 查看容量</summary>
+              <section className="stats-grid cleanup-capacity" aria-label="磁盘容量">
                 <div className="disk-card">
                   <div className="card-kicker">
                     <HardDrive size={17} />
@@ -731,37 +776,7 @@ export default function App() {
                     <span>总计 {disk ? bytes(disk.total) : "—"}</span>
                   </div>
                 </div>
-                <div className="metric-card">
-                  <div className="card-kicker">
-                    <Sparkles size={17} />
-                    可清理候选
-                  </div>
-                  <strong>{scan ? bytes(candidateBytes) : "—"}</strong>
-                  <p>
-                    {scan
-                      ? `${eligible.length} 项支持官方命令清理`
-                      : "扫描后发现可清理内容"}
-                  </p>
-                  {scan ? (
-                    <button
-                      className="metric-shortcut"
-                      disabled={busy || browsing}
-                      onClick={() => showCleanupFilter("available")}
-                    >
-                      查看可预览项目 <ArrowRight size={15} />
-                    </button>
-                  ) : (
-                    <span className="metric-foot">
-                      扫描后查看可预览项目 <ArrowDownRight size={16} />
-                    </span>
-                  )}
-                  {scan && (
-                    <small className="metric-estimate-note">
-                      观测占用，不等于实际可释放空间
-                    </small>
-                  )}
-                </div>
-              </section>
+              </section></details>
               {scan && (
                 <p className="scan-scope-summary" role="status">
                   <Folder size={14} />
@@ -772,17 +787,9 @@ export default function App() {
               {scan?.extended === true && <p className="scan-root-summary">主要目录：{scan.roots.length ? scan.roots.map((r) => r.name).join("、") : "未选择；仅分析扩展固定／发现项目"}。未选择的位置不代表零占用，范围之间可能重叠。</p>}
               {scan && <ScanTiming scan={scan} />}
               {scan && <ScanCoverage key={`coverage-${scan.id}`} scan={scan} />}
-              {scan && (
-                <CleanupAnalysis
-                  key={scan.id}
-                  scan={scan}
-                  disabled={!desktop || busy || browsing}
-                  onReview={(ids) => void prepareItems(ids)}
-                  activeFilter={cleanupFilter}
-                  onFilter={showCleanupFilter}
-                />
-              )}
-              <ObservationOverview project={projectReport} ai={aiReports} onNavigate={setView} />
+
+
+
               {scan && scan.roots.length > 0 && (
                 <section className="root-inventory" aria-label="主要目录总览">
                   <details className="directory-overview">
@@ -848,12 +855,14 @@ export default function App() {
                   }}
                 />
               )}
-              <section
+              {!scan && <button className="text-button cleanup-space-link" onClick={() => setView("space")}>查看空间占用 <ArrowRight size={15} /></button>}
+              {(scan || result || status === "scan") && <section
                 className="inventory"
                 ref={inventoryRef}
                 tabIndex={-1}
                 aria-label="空间清单"
               >
+                {(scan || result) && <>
                 <div className="section-heading">
                   <div>
                     <h2>
@@ -873,7 +882,7 @@ export default function App() {
                     扫描不会修改文件
                   </span>
                 </div>
-                <div className="filters" role="group" aria-label="按类型筛选">
+                {scan && <details className="cleanup-more-filters"><summary>更多筛选{cleanupFilter !== "all" || category !== "全部" ? " · 已启用" : ""}</summary><div className="filters" role="group" aria-label="按类型筛选">
                   {categories.map((c) => (
                     <button
                       key={c}
@@ -885,7 +894,6 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                {scan && (
                   <div
                     className="cleanup-state-filters"
                     role="group"
@@ -896,7 +904,7 @@ export default function App() {
                         <button
                           key={filter}
                           aria-pressed={cleanupFilter === filter}
-                          onClick={() => setCleanupFilter(filter)}
+                          onClick={() => showCleanupFilter(filter)}
                         >
                           {cleanupLabels[filter]}{" "}
                           <span>
@@ -908,7 +916,8 @@ export default function App() {
                       ),
                     )}
                   </div>
-                )}
+                </details>}
+                </>}
                 {items.length === 0 ? (
                   <div className="empty-state">
                     <div className="empty-symbol">
@@ -916,25 +925,16 @@ export default function App() {
                     </div>
                     <h3>
                       {status === "scan"
-                        ? "正在认识你的磁盘"
+                        ? "正在扫描…"
                         : result
                           ? "重新确认剩余空间"
-                          : "空间的去向，从这里开始"}
+                          : "还没有扫描结果"}
                     </h3>
                     <p>
                       {status === "scan"
-                        ? "逐项扫描固定目录，可随时停止。遇到权限限制会明确标记。"
-                        : "先确认扫描范围。默认只检查三个缓存位置；扩展扫描可分析主要目录和应用数据，结果不会自动勾选。"}
+                        ? "可以随时停止，不会自动清理文件。"
+                        : "点击右上角“开始检查”，选择范围后查看结果。"}
                     </p>
-                    {status !== "scan" && (
-                      <button
-                        className="text-button"
-                        disabled={!desktop || busy}
-                        onClick={startScan}
-                      >
-                        {result ? "重新扫描" : "开始第一次扫描"} <ArrowRight size={16} />
-                      </button>
-                    )}
                   </div>
                 ) : (
                   <>
@@ -967,7 +967,7 @@ export default function App() {
                         />
                         名称 / 用途
                       </label>
-                      <span>分配空间</span>
+                      <span>占用空间</span>
                       <span>处理方式</span>
                     </div>
                     <div className="item-list">
@@ -1018,21 +1018,23 @@ export default function App() {
                                   }
                                 >
                                   <strong>{item.name}</strong>
+                                  {itemState === "blocked" && <small className="item-block-reason">{item.blocked || (!item.complete || item.issues ? "检查不完整，暂时保留" : "工具或占用待确认，暂时保留")}</small>}
                                   <span title={item.path}>
-                                    {shortPath(item.path)}
+                                    {canSelect ? "清理后可能需要重新下载或构建" : intentions.view.includes(item) ? "只读查看，不提供清理" : intentions.empty.includes(item) ? "本次未测得正占用" : !item.complete || item.issues ? "检查不完整，暂时保留" : item.impact}
                                   </span>
                                 </button>
                               </div>
                               <strong className="item-size">
-                                {!item.complete || item.issues > 0 ? "≥ " : ""}
-                                {bytes(item.bytes)}
+                                {Number.isFinite(item.bytes) && item.bytes > 0 && (!item.complete || item.issues > 0) ? "≥ " : ""}
+                                {!Number.isFinite(item.bytes) || item.bytes < 0 || (!item.complete && item.bytes === 0) ? "未统计" : bytes(item.bytes)}
                               </strong>
                               <div className="item-action">
-                                <span
+                                {!canSelect && <span
                                   className={`badge ${canSelect ? "green" : itemState === "blocked" ? "amber" : ""}`}
                                 >
-                                  {cleanupLabels[itemState]}
-                                </span>
+                                  {canSelect ? "可以清理" : intentions.view.includes(item) ? "可以查看" : itemState === "empty" || intentions.empty.includes(item) ? "未发现占用" : item.evidence?.protected ? "已保护" : itemState === "blocked" ? "暂不可处理" : "需要保留"}
+                                </span>}
+                                {canSelect && <button className="button secondary item-preview" aria-label={`预览${item.name}清理`} disabled={!desktop || busy || browsing || scanExpired} onClick={() => void prepareItems([item.id])}>预览清理</button>}
                                 <button
                                   className="icon-button"
                                   aria-label={`查看${item.name}详情`}
@@ -1053,7 +1055,7 @@ export default function App() {
                               </div>
                             </div>
                             {expanded === item.id && (
-                              <div className="item-details">
+                              <div className="item-details"><code className="cleanup-item-path">{item.path}</code>
                                 {!item.evidence && <p>{item.impact}</p>}
                                 {item.evidence && (
                                   <CleanupEvidence evidence={item.evidence} />
@@ -1097,7 +1099,7 @@ export default function App() {
                                         disabled={busy || browsing}
                                         onClick={() => setView("projects")}
                                       >
-                                        查看项目账本 <ArrowRight size={13} />
+                                        查看项目空间 <ArrowRight size={13} />
                                       </button>
                                     )}
                                   </div>
@@ -1142,7 +1144,7 @@ export default function App() {
                           className="button secondary"
                           onClick={() => {
                             setCategory("全部");
-                            setCleanupFilter("all");
+                            showCleanupIntent("all");
                           }}
                         >
                           清除筛选
@@ -1157,7 +1159,7 @@ export default function App() {
                     按实际分配块估算，同层硬链接去重；不跟随符号链接或跨文件系统。子目录显示子树总量，统计不完整时显示下限。
                   </span>
                 </div>
-              </section>
+              </section>}
               <div className="principles">
                 <div>
                   <LockKeyhole size={16} />
@@ -1173,60 +1175,17 @@ export default function App() {
                 </div>
               </div>
             </>
+          ) : view === "space" ? (
+            <><SpaceHome desktop={desktop} busy={busy || browsing} choosing={status === "choose"} folder={analysisFolder} acknowledged={folderAck} onAcknowledge={setFolderAck} onChoose={() => void chooseAnalysisFolder()} onAnalyze={() => void openBrowser(analysisFolder!)} roots={scan?.roots ?? []} onBrowse={item => void openBrowser(item)} />
+            {(projectReport || aiReports?.length) && <ObservationOverview project={projectReport} ai={aiReports} onNavigate={setView} />}</>
           ) : view === "projects" ? (
-            <ProjectLedger
-              desktop={desktop}
-              busy={busy || browsing}
-              scanning={status === "projects"}
-              progress={progress}
-              report={projectReport}
-              onScan={(root) => setScanRequest({ root })}
-              onCancel={() =>
-                void api.cancel().catch((e) => setError(errorMessage(e)))
-              }
-              onCaches={() => setView("overview")}
-            />
-          ) : view === "residue" ? (
-            <AppResidue desktop={desktop} busy={busy || browsing} scanning={status === "residue"} report={residueReport} onInspect={() => void inspectResidue()} onCancel={() => void api.cancel().catch(e => setError(errorMessage(e)))} />
+            null
+          ) : view === "developer" ? null : view === "residue" ? (
+            null
           ) : view === "ai" ? (
-            <AiData desktop={desktop} busy={busy || browsing} scanning={status === "ai"}
-              reports={aiReports} baselines={aiBaselines} onBaseline={(report) => setAiBaselines((previous) => [...previous.filter((b) => b.tool !== report.tool || b.root !== report.root), report])} onAnalyze={(roots) => void analyzeAi(roots)}
-              onCancel={() => void api.cancel().catch((e) => setError(errorMessage(e)))} />
+            null
           ) : (
-            <section className="history-list">
-              {history.length === 0 ? (
-                <div className="empty-state">
-                  <div className="empty-symbol">
-                    <History size={30} strokeWidth={1.3} />
-                  </div>
-                  <h3>还没有清理记录</h3>
-                  <p>
-                    完成第一次清理后，这里会记录每项结果与磁盘可用空间变化。
-                  </p>
-                </div>
-              ) : (
-                history.map((r) => (
-                  <article className="history-card" key={r.at}>
-                    <div>
-                      <Clock3 size={17} />
-                      <strong>{date(r.at)}</strong>
-                      <span>
-                        <SpaceChange record={r} />
-                      </span>
-                    </div>
-                    {r.outcomes.map((o, index) => (
-                      <CleanupOutcome key={index} outcome={o} />
-                    ))}
-                    {r.warning && <p className="warning-text">{r.warning}</p>}
-                    <p>
-                      操作期间磁盘变化可能包含其他进程活动。候选占用{" "}
-                      {bytes(r.estimated)} · 可用空间 {bytes(r.beforeAvailable)}{" "}
-                      → {bytes(r.afterAvailable)}
-                    </p>
-                  </article>
-                ))
-              )}
-            </section>
+            null
           )}
         </div>
         {view === "overview" && selectedItems.length > 0 && (
@@ -1260,7 +1219,7 @@ export default function App() {
               <button
                 className="button primary"
                 disabled={
-                  !desktop || busy || selectedItems.length === 0 || browsing
+                  !desktop || busy || selectedItems.length === 0 || browsing || scanExpired
                 }
                 onClick={prepare}
               >
@@ -1405,39 +1364,9 @@ export default function App() {
             </p>
           )}
           {browse && <DirectoryInsights key={browse.item.id}
-            data={browse} relative={browse.relative} busy={browsing}
+            data={browse} entries={browse.children} relative={browse.relative} busy={browsing}
             onOpen={relative => void openBrowser(browse.item, relative)}
             onReveal={relative => api.revealFile(browse.item.id, relative, browse.measuredAt)}>
-          <div className="browse-list">
-            {browse?.children.map((c) => (
-              <button
-                key={c.id}
-                disabled={c.category !== "目录" || browsing}
-                onClick={() => browse && void openBrowser(browse.item, c.id)}
-              >
-                <span>
-                  {c.category === "目录" ? (
-                    <Folder size={16} />
-                  ) : (
-                    <FileBox size={16} />
-                  )}
-                  {c.name}
-                </span>
-                <span>
-                  {!c.complete || c.issues > 0 ? "≥ " : ""}
-                  {bytes(c.bytes)}
-                  {c.category === "目录" && <ChevronRight size={14} />}
-                </span>
-              </button>
-            ))}
-            {!browsing && browse?.children.length === 0 && (
-              <p>
-                {browse.complete && browse.issues === 0
-                  ? "目录为空。"
-                  : "未读取到子项，请检查权限或重试。"}
-              </p>
-            )}
-          </div>
           {browse && (
             <div className="browse-pagination">
               <span>

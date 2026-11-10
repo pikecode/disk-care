@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Layers3 } from "lucide-react";
 import { bytes } from "./format";
 import {
@@ -13,15 +13,25 @@ import type { ProjectReport } from "./types";
 export default function SpaceMap({
   report,
   onRelations,
+  initialProjectPath,
+  onProject,
 }: {
   report: ProjectReport;
   onRelations: (path: string) => void;
+  initialProjectPath?: string;
+  onProject?: (path: string) => void;
 }) {
   const roots = useMemo(() => projectSpaces(report), [report]);
   const [trail, setTrail] = useState<SpaceObject[]>([]);
-  const [selected, setSelected] = useState<SpaceObject | null>(null);
+  const [selected, setSelected] = useState<SpaceObject | null>(() => roots.find(item => item.project?.path === initialProjectPath) ?? null);
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(50);
+  useEffect(() => {
+    const project = roots.find(item => item.project?.path === initialProjectPath);
+    if (project && selected?.project?.path !== initialProjectPath) {
+      setSelected(project); setTrail([]); setQuery(""); setVisible(50);
+    }
+  }, [initialProjectPath, roots]);
   const scope = trail.at(-1);
   const objects =
     scope?.kind === "project"
@@ -40,6 +50,7 @@ export default function SpaceMap({
     setVisible(50);
   };
   const choose = (item: SpaceObject) => {
+    if (item.project) onProject?.(item.project.path);
     setSelected(item.kind === "group" ? null : item);
     if (item.kind !== "artifact") {
       setTrail((current) => [...current, item]);

@@ -159,7 +159,7 @@ async (page) => {
   async function scan(first = false) {
     await page
       .getByRole("button", {
-        name: first ? "开始扫描" : "重新扫描",
+        name: first ? "开始检查" : "重新检查",
         exact: true,
       })
       .first()

@@ -20,7 +20,8 @@ async (page) => {
     }};
   });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button",{name:"项目账本",exact:true}).click();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
+  await page.getByRole("button",{name:"项目空间",exact:true}).click();
   const scan=async(mode)=>{
     await page.evaluate(m=>{window.modelMode=m;},mode);
     await page.getByRole("button",{name:"扫描项目",exact:true}).click();

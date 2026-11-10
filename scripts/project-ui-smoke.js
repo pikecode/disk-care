@@ -67,27 +67,29 @@ async (page) => {
     };
   });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button", { name: "项目账本", exact: true }).click();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
+  await page.getByRole("button", { name: "项目空间", exact: true }).click();
   await page.getByLabel("工作目录 项目按指定目录扫描").fill("~/Projects");
   await page.getByRole("button", { name: "扫描项目", exact: true }).click();
   await page
     .getByRole("checkbox", { name: "我已了解范围与权限要求，继续扫描" })
     .check();
   await page.getByRole("button", { name: "开始项目扫描", exact: true }).click();
+  await page.getByRole("button",{name:"关系图",exact:true}).click();
   await page.getByText("已测量产物目录", { exact: true }).waitFor();
   if ((await page.locator(".relation-project-list button").count()) !== 50)
     throw new Error("关系图项目列表首次应展示 50 项");
   await page.getByRole("button", { name: "更多项目", exact: false }).click();
   if ((await page.locator(".relation-project-list button").count()) !== 52)
     throw new Error("关系图项目分页错误");
-  await page.getByRole("button", { name: "账本列表", exact: true }).click();
-  if ((await page.locator(".project-card").count()) !== 50)
+  await page.getByRole("button", { name: "项目列表", exact: true }).click();
+  if ((await page.locator(".project-object-row").count()) !== 50)
     throw new Error("首次只显示 50 个项目");
   await page.getByRole("button", { name: "继续显示", exact: false }).click();
-  if ((await page.locator(".project-card").count()) !== 52)
+  if ((await page.locator(".project-object-row").count()) !== 52)
     throw new Error("加载更多未完成");
   await page.getByRole("button", { name: "Rust", exact: true }).click();
-  if ((await page.locator(".project-card").count()) !== 1)
+  if ((await page.locator(".project-object-row").count()) !== 1)
     throw new Error("语言筛选错误");
   await page.locator(".project-evidence summary").click();
   await page.getByText("config.yaml 引用模型", { exact: false }).waitFor();
@@ -103,8 +105,9 @@ async (page) => {
     fullPage: true,
   });
   await page.getByRole("button", { name: "查看缓存清理", exact: true }).click();
-  await page.getByRole("button", { name: "开始扫描", exact: true }).waitFor();
-  await page.getByRole("button", { name: "项目账本", exact: true }).click();
+  await page.getByRole("button", { name: "开始检查", exact: true }).waitFor();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
+  await page.getByRole("button", { name: "项目空间", exact: true }).click();
   if (
     (await page.getByLabel("工作目录 项目按指定目录扫描").inputValue()) !==
     "~/Projects"
@@ -124,6 +127,8 @@ async (page) => {
       .isEnabled()
   )
     throw new Error("扫描中必须禁用重复任务");
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'清理',exact:true}).click();
+  await page.getByRole('status',{name:'进行中的任务'}).getByRole('button',{name:'返回项目空间',exact:true}).click();
   await page.getByRole("button", { name: "停止", exact: true }).click();
   await page
     .getByText("本次扫描不完整，不计算增减，也不覆盖上次完整基线。", {

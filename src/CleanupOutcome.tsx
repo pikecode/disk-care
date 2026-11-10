@@ -29,6 +29,12 @@ const outcomeLabels = {
   unknown: "未明确",
 };
 
+export function summarizeOutcomes(outcomes: Outcome[]) {
+  const counts = { all: outcomes.length, success: 0, failed: 0, skipped: 0, unknown: 0 };
+  for (const outcome of outcomes) counts[outcomeStatus(outcome)]++;
+  return counts;
+}
+
 export default function CleanupOutcome({ outcome }: { outcome: Outcome }) {
   const label = outcomeLabels[outcomeStatus(outcome)];
   return (
@@ -55,20 +61,18 @@ export function CleanupResult({
   disabled,
   onReview,
   onRescan,
+  historical = false,
 }: {
   record: CleanupRecord;
   disabled: boolean;
   onReview: () => void;
   onRescan: () => void;
+  historical?: boolean;
 }) {
   const [filter, setFilter] = useState<
-    "all" | "failed" | "skipped" | "unknown"
+    "all" | "success" | "failed" | "skipped" | "unknown"
   >("all");
-  const counts = { all: record.outcomes.length, failed: 0, skipped: 0, unknown: 0 };
-  for (const outcome of record.outcomes) {
-    const status = outcomeStatus(outcome);
-    if (status !== "success") counts[status]++;
-  }
+  const counts = summarizeOutcomes(record.outcomes);
   const complete =
     counts.all > 0 && counts.failed + counts.skipped + counts.unknown === 0;
   const shown = record.outcomes.filter(
@@ -76,6 +80,7 @@ export function CleanupResult({
   );
   const filters = [
     "all",
+    "success",
     "failed",
     "skipped",
     ...(counts.unknown ? ["unknown" as const] : []),
@@ -83,7 +88,7 @@ export function CleanupResult({
   return (
     <section
       className={`result-card ${complete ? "" : "result-partial"}`}
-      aria-label="本次清理结果"
+      aria-label={historical ? "历史清理结果" : "本次清理结果"}
     >
       {complete ? (
         <CircleCheck size={24} aria-hidden="true" />
@@ -98,6 +103,8 @@ export function CleanupResult({
               ? "命令均已完成，请查看核验结果"
               : "清理已结束，部分项目未完成；请查看逐项结果"}
         </strong>
+        {historical && <p>这是当时的执行与观测结果，不代表当前状态。需要处理剩余内容时，请先重新检查。</p>}
+        <p className="result-summary">完成 {counts.success} · 失败 {counts.failed} · 跳过 {counts.skipped}{counts.unknown ? ` · 未明确 ${counts.unknown}` : ""}</p>
         <p>
           <SpaceChange record={record} />
           。这是所测数据卷在操作期间的变化，其他进程、共享文件和快照均可能影响，不能归因于本次清理。
@@ -134,14 +141,14 @@ export function CleanupResult({
         )}
         <div className="result-actions">
           <button className="text-button" disabled={disabled} onClick={onReview}>
-            查看剩余项目
+            {historical ? "返回清理页" : "查看剩余项目"}
           </button>
           <button
             className="button secondary"
             disabled={disabled}
             onClick={onRescan}
           >
-            重新扫描 <RefreshCw size={14} aria-hidden="true" />
+            {historical ? "重新检查当前空间" : "重新检查"} <RefreshCw size={14} aria-hidden="true" />
           </button>
         </div>
       </div>

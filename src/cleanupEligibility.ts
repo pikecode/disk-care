@@ -108,3 +108,19 @@ export function cleanupAdvice(
       "此规则未开放清理，可先只读浏览目录并核对用途。仅供分析不等于不再使用。",
   };
 }
+
+export type CleanupIntent = "all" | "clean" | "view" | "keep" | "empty";
+export const cleanupIntentLabels = { clean: "可以清理", view: "可以查看", keep: "需要保留" } as const;
+// 仅作只读导航分组，不据目录名称开放清理；未知规则默认保留。
+const viewOnlyRules = new Set(["downloads", "yarn", "pnpm", "poetry", "gradle", "vscode", "playwright"]);
+export function groupCleanup(analysis: ReturnType<typeof analyzeCleanup>) {
+  const groups = { clean: analysis.available, view: [] as Item[], keep: [...analysis.blocked], empty: [...analysis.empty] };
+  for (const item of analysis.readonly) {
+    const confirmed = item.complete && item.issues === 0 && Number.isFinite(item.bytes) && item.bytes >= 0 &&
+      (item.coverage == null || (item.coverage.status === "complete" && item.coverage.permissionDenied === 0 && item.coverage.excluded === 0 && !item.coverage.limited && !item.coverage.cancelled)) && !item.evidence?.protected;
+    if (!confirmed || !viewOnlyRules.has(item.id)) groups.keep.push(item);
+    else if (item.bytes === 0) groups.empty.push(item);
+    else groups.view.push(item);
+  }
+  return groups;
+}

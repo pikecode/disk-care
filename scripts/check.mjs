@@ -12,7 +12,7 @@ function run(command, args) {
 const output = mkdtempSync(join(tmpdir(), "disk-care-check-"));
 try {
   run("npm", ["run", "build"]);
-  const checks = ["cleanup-analysis", "relationships", "space-map", "directory-data", "ai-baseline"];
+  const checks = ["cleanup-analysis", "relationships", "space-map", "directory-data", "ai-baseline", "app-association", "developer-ledger"];
   run(process.execPath, ["node_modules/typescript/bin/tsc", "--target", "ES2022",
     "--module", "commonjs", "--moduleResolution", "node", "--strict", "--skipLibCheck",
     "--outDir", output, ...checks.map(name => `scripts/${name}-check.ts`)]);
@@ -21,7 +21,7 @@ try {
   run("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml"]);
   run("cargo", ["fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check"]);
   run("cargo", ["clippy", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets", "--", "-D", "warnings"]);
-  console.log("通过：构建、五组前端断言、Rust 测试、格式及 Clippy。浏览器、真实目录和应用包需单独验收。");
+  console.log("通过：构建、七组前端断言、Rust 测试、格式及 Clippy。浏览器、真实目录和应用包需单独验收。");
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

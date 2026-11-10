@@ -1,6 +1,12 @@
 #[path = "app_residue.rs"]
 mod app_residue;
-pub use app_residue::ResidueReport;
+#[path = "dev_tools.rs"]
+mod dev_tools;
+pub use dev_tools::{DeveloperPreview, DeveloperReport};
+#[path = "app_uninstall.rs"]
+mod app_uninstall;
+pub use app_residue::{AppCatalog, AppUsage, ResidueReport};
+pub use app_uninstall::{UninstallPreview, UninstallRecord, UninstallResult};
 #[path = "ai_data.rs"]
 mod ai_data;
 pub use ai_data::{AiReport, AiRoot};
@@ -352,6 +358,13 @@ fn rule(id: &str) -> Result<Rule, String> {
         .ok_or_else(|| "未知分析项目".into())
 }
 
+#[derive(Clone)]
+struct SelectedDirectory {
+    item: Item,
+    device: u64,
+    inode: u64,
+}
+static NEXT_DIRECTORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 pub struct Engine {
     home: PathBuf,
     history_path: PathBuf,
@@ -361,7 +374,9 @@ pub struct Engine {
     busy: AtomicBool,
     cleaning: AtomicBool,
     directories: Mutex<HashMap<PathBuf, Directory>>,
+    selected_directory: Mutex<Option<SelectedDirectory>>,
     residue: Mutex<Option<ResidueReport>>,
+    uninstall: Mutex<Option<app_uninstall::UninstallPlan>>,
 }
 struct Job<'a>(&'a AtomicBool);
 impl Drop for Job<'_> {
@@ -381,7 +396,9 @@ impl Engine {
             busy: AtomicBool::new(false),
             cleaning: AtomicBool::new(false),
             directories: Mutex::new(HashMap::new()),
+            selected_directory: Mutex::new(None),
             residue: Mutex::new(None),
+            uninstall: Mutex::new(None),
         }
     }
     fn job(&self) -> Result<Job<'_>, String> {
@@ -764,6 +781,68 @@ impl Engine {
             snapshot: None,
         }
     }
+    pub fn select_directory(&self, path: PathBuf) -> Result<Item, String> {
+        let _job = self.job()?;
+        checked_read_path(&path)?;
+        let metadata = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        if !metadata.is_dir() {
+            return Err("请选择一个真实文件夹".into());
+        }
+        let id = format!(
+            "selected-directory-{}",
+            NEXT_DIRECTORY.fetch_add(1, Ordering::SeqCst)
+        );
+        let name = path
+            .file_name()
+            .and_then(|p| p.to_str())
+            .unwrap_or("所选文件夹");
+        let item = readonly_item(&id, name, &path);
+        self.directories
+            .lock()
+            .map_err(|_| "目录缓存不可用")?
+            .retain(|p, _| !p.starts_with(&path));
+        *self
+            .selected_directory
+            .lock()
+            .map_err(|_| "目录选择不可用")? = Some(SelectedDirectory {
+            item: item.clone(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        });
+        Ok(item)
+    }
+    fn browsing_root(&self, id: &str) -> Result<Item, String> {
+        if id.starts_with("selected-directory-") {
+            let selected = self
+                .selected_directory
+                .lock()
+                .map_err(|_| "目录选择不可用")?
+                .clone()
+                .filter(|s| s.item.id == id)
+                .ok_or("目录选择已失效，请重新选择")?;
+            let path = Path::new(&selected.item.path);
+            checked_read_path(path)?;
+            let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+            if !metadata.is_dir()
+                || metadata.dev() != selected.device
+                || metadata.ino() != selected.inode
+            {
+                return Err("所选目录身份已变化，请重新选择".into());
+            }
+            return Ok(selected.item);
+        }
+        let snapshot = self.scan.lock().map_err(|_| "扫描状态不可用")?;
+        let snapshot = snapshot
+            .as_ref()
+            .ok_or("请先扫描或选择文件夹，再浏览目录")?;
+        snapshot
+            .items
+            .iter()
+            .chain(&snapshot.roots)
+            .find(|item| item.id == id)
+            .cloned()
+            .ok_or("该目录不在当前扫描结果中".into())
+    }
     pub fn children(
         &self,
         id: &str,
@@ -781,18 +860,7 @@ impl Engine {
         {
             return Err("子目录路径无效".into());
         }
-        let snapshot = self
-            .scan
-            .lock()
-            .map_err(|_| "扫描状态不可用")?
-            .clone()
-            .ok_or("请先扫描，再浏览目录")?;
-        let item = snapshot
-            .items
-            .iter()
-            .chain(&snapshot.roots)
-            .find(|i| i.id == id)
-            .ok_or("该目录不在当前扫描结果中")?;
+        let item = self.browsing_root(id)?;
         let root = PathBuf::from(&item.path);
         let path = root.join(relative);
         if !path.starts_with(&root) {
@@ -907,14 +975,7 @@ impl Engine {
         {
             return Err("文件相对路径无效".into());
         }
-        let scan = self.scan.lock().map_err(|_| "扫描状态不可用")?;
-        let scan = scan.as_ref().ok_or("请重新扫描")?;
-        let root = scan
-            .items
-            .iter()
-            .chain(&scan.roots)
-            .find(|item| item.id == id)
-            .ok_or("该目录不在当前扫描结果中")?;
+        let root = self.browsing_root(id)?;
         let path = Path::new(&root.path).join(relative);
         checked_read_path(&path)?;
         let cache = self.directories.lock().map_err(|_| "目录缓存不可用")?;
@@ -1984,11 +2045,16 @@ fn tool(action: Action, home: &Path) -> Option<PathBuf> {
         Action::Npm => "npm",
         Action::Pip => "python3",
     };
+    find_tool(name, home)
+}
+fn find_tool(name: &str, home: &Path) -> Option<PathBuf> {
     let mut paths = vec![
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
         home.join(".local/bin"),
         PathBuf::from("/opt/anaconda3/bin"),
+        home.join("Library/pnpm"),
+        home.join(".cargo/bin"),
     ];
     if let Ok(entries) = fs::read_dir(home.join(".nvm/versions/node")) {
         let mut dirs: Vec<_> = entries.flatten().map(|e| e.path().join("bin")).collect();
@@ -2060,7 +2126,18 @@ fn read_output(mut pipe: impl Read) -> String {
     }
     String::from_utf8_lossy(&result).into_owned()
 }
-fn run_command(mut command: Command, timeout: Duration) -> Result<String, String> {
+fn run_command(command: Command, timeout: Duration) -> Result<String, String> {
+    let (status, stdout, stderr) = run_command_output(command, timeout)?;
+    let output = format!("{stdout}{stderr}");
+    if !status.success() {
+        return Err(format!("清理命令失败（{status}）：{output}"));
+    }
+    Ok(output)
+}
+fn run_command_output(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, String, String), String> {
     command
         .process_group(0)
         .stdin(Stdio::null())
@@ -2089,21 +2166,15 @@ fn run_command(mut command: Command, timeout: Duration) -> Result<String, String
         }
         thread::sleep(Duration::from_millis(100));
     };
-    let output = format!(
-        "{}{}",
-        out.join().unwrap_or_default(),
-        err.join().unwrap_or_default()
-    );
+    let stdout = out.join().map_err(|_| "读取命令输出失败")?;
+    let stderr = err.join().map_err(|_| "读取命令错误失败")?;
     if timed_out {
         return Err(format!(
             "命令超过 {} 秒，已终止；清理命令可能已处理部分内容，请重新扫描",
             timeout.as_secs()
         ));
     }
-    if !status.success() {
-        return Err(format!("清理命令失败（{}）：{}", status, output));
-    }
-    Ok(output)
+    Ok((status, stdout, stderr))
 }
 fn models(root: &Path) -> Vec<String> {
     let manifests = root.join("manifests");
@@ -2141,6 +2212,73 @@ fn models(root: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selected_directory_browses_without_scan_and_cannot_authorize_cleanup() {
+        let f = Fixture::new();
+        let root = f.0.join("folder");
+        fs::create_dir_all(root.join("child")).unwrap();
+        let file = root.join("large.bin");
+        fs::write(&file, vec![1u8; 1024 * 1024]).unwrap();
+        fs::write(root.join("child/small"), "元数据").unwrap();
+        let engine = Engine::new(f.0.clone());
+        let item = engine.select_directory(root.clone()).unwrap();
+        assert!(engine.scan.lock().unwrap().is_none());
+        let listing = engine.children(&item.id, "", 0, |_| {}).unwrap();
+        assert_eq!(listing.total, 2);
+        assert_eq!(listing.large_files_total, 1);
+        assert_eq!(
+            engine
+                .observed_file(&item.id, "large.bin", listing.measured_at)
+                .unwrap(),
+            file
+        );
+        assert!(engine.children(&item.id, "../outside", 0, |_| {}).is_err());
+        assert!(engine
+            .observed_file(&item.id, "../outside", listing.measured_at)
+            .is_err());
+        assert!(engine.prepare(1, vec![item.id.clone()]).is_err());
+        let scan_id = now();
+        *engine.scan.lock().unwrap() = Some(Scan {
+            extended: false,
+            id: scan_id,
+            disk: engine.disk().unwrap(),
+            items: vec![],
+            roots: vec![],
+            duration_ms: 0,
+            cancelled: false,
+            timings: vec![],
+        });
+        assert!(engine.prepare(scan_id, vec![item.id.clone()]).is_err());
+        assert!(engine.children(&item.id, "child", 0, |_| {}).is_ok());
+        let replacement = root.join("replacement");
+        fs::create_dir(&replacement).unwrap();
+        let next = engine.select_directory(replacement).unwrap();
+        assert_ne!(item.id, next.id);
+        assert!(engine.children(&item.id, "", 0, |_| {}).is_err());
+        assert!(engine
+            .observed_file(&item.id, "large.bin", listing.measured_at)
+            .is_err());
+    }
+    #[test]
+    fn selected_directory_rejects_links_private_roots_and_replaced_identity() {
+        let f = Fixture::new();
+        let engine = Engine::new(f.0.clone());
+        assert!(engine.select_directory(PathBuf::from("/")).is_err());
+        let private = f.0.join("Library/Containers/private");
+        fs::create_dir_all(&private).unwrap();
+        assert!(engine.select_directory(private).is_err());
+        let root = f.0.join("folder");
+        fs::create_dir(&root).unwrap();
+        let link = f.0.join("link");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(engine.select_directory(link).is_err());
+        let item = engine.select_directory(root.clone()).unwrap();
+        fs::rename(&root, f.0.join("old-folder")).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(engine.children(&item.id, "", 0, |_| {}).is_err());
+        let next = engine.select_directory(root).unwrap();
+        assert!(engine.children(&next.id, "", 0, |_| {}).is_ok());
+    }
     #[test]
     fn diagnostics_are_bounded_and_legacy_coverage_is_compatible() {
         let mut coverage: Coverage = serde_json::from_str(

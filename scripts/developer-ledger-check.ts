@@ -1,0 +1,21 @@
+import { updateLedger, orderedTools, largestSource, byObservedSize } from "../src/developerLedger";
+import type { DeveloperEntry, DeveloperReport } from "../src/types";
+function check(value: unknown, message: string) { if (!value) throw new Error(message); }
+const source = (tool: string, name: string, allocatedBytes: number | null): DeveloperEntry => ({ tool, name, allocatedBytes, path: `/fixture/${name}`, kind: "保护", basis: "测试", impact: "只读", entries: null, coverage: { status: allocatedBytes === null ? "pending" : "complete", permissionDenied: 0, excluded: 0, limited: false, cancelled: false } });
+const report: DeveloperReport = { measuredAt: 10, notes: [], entries: [source("Rust", "build", 90), source("Rust", "release", 90), source("Homebrew", "db", 100), source("yarn", "cache", null)] };
+const first = updateLedger({}, ["rust", "homebrew", "yarn"], report, { id: "first", path: "/project/first" });
+check(first.rust?.report.entries.length === 2, "规范工具标识后应分离Rust来源");
+check(orderedTools(first, "size")[0][0] === "homebrew", "按最大来源排序，不能将Rust两项相加");
+check(orderedTools(first, "size").at(-1)?.[0] === "yarn", "未知占用排后");
+check(largestSource(first.yarn) === undefined, "未统计不能变成零");
+const next = updateLedger(first, ["rust"], { ...report, measuredAt: 20, entries: [source("Rust", "new", null)] }, { id: "second", path: "/project/second" });
+check(next.homebrew === first.homebrew && next.yarn === first.yarn, "单工具重查保留其他工具报告与时间");
+check(next.rust?.report.measuredAt === 20 && next.rust.project?.id === "second", "重查绑定新的项目范围及时间");
+check(next.rust?.report.entries.length === 1 && next.rust.report.entries[0].allocatedBytes === null, "未访问新结果不能继承旧数据");
+check(first.rust?.project?.id === "first" && first.rust.report.entries.length === 2, "更新不能修改旧报告");
+const zero = updateLedger(next, ["yarn"], { ...report, entries: [source("yarn", "empty", 0)] }, null);
+check(largestSource(zero.yarn)?.allocatedBytes === 0, "真实零值必须保留");
+const entries = [source("yarn", "unknown", null), source("yarn", "zero", 0), source("yarn", "large", 20)];
+check(entries.slice().sort(byObservedSize).map(e => e.name).join() === "large,zero,unknown", "来源大小及未知排序");
+check(entries[0].name === "unknown", "不原地改变报告顺序");
+console.log("通过：开发工具分组、最大来源排序、单工具替换、时间／项目绑定、未统计与零值。");

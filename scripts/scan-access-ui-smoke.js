@@ -55,7 +55,7 @@ async (page) => {
   await page.goto("http://127.0.0.1:1420");
   const scans = () =>
     page.evaluate(() => window.calls.filter((c) => c.cmd === "scan_disk"));
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.getByRole("button", { name: "开始检查", exact: true }).click();
   if ((await scans()).length) throw new Error("确认前启动了扫描");
   if (
     !(await page
@@ -65,7 +65,7 @@ async (page) => {
     throw new Error("缺省范围错误");
   await page.getByRole("button", { name: "取消", exact: true }).click();
   if ((await scans()).length) throw new Error("取消启动了扫描");
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.getByRole("button", { name: "开始检查", exact: true }).click();
   await page
     .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
     .check();
@@ -124,7 +124,7 @@ async (page) => {
   if ((await scans())[0].args.extended !== true)
     throw new Error("扩展范围未传递");
   await page
-    .getByRole("button", { name: "重新扫描", exact: true })
+    .getByRole("button", { name: "重新检查", exact: true })
     .first()
     .click();
   await page
@@ -133,7 +133,7 @@ async (page) => {
   const calls = await scans();
   if (calls.length !== 2 || calls[1].args.extended !== false)
     throw new Error("后续扫描未恢复默认范围");
-  await page.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await page.getByRole("button", { name: "重新检查", exact: true }).click();
   await page.evaluate(() => { window.catalogFail = true; });
   await page.getByRole("radio", { name: "扩展扫描：主要目录与应用数据" }).check();
   await page.getByRole("alert").getByText(/目录选项加载失败/).waitFor();
@@ -149,7 +149,7 @@ async (page) => {
   if (JSON.stringify((await scans())[2].args.rootIds) !== "[]") throw new Error("空集合回退全量");
   await page.locator('.scan-root-summary').getByText(/未选择；仅分析扩展固定/).waitFor();
   await page.evaluate(() => { window.holdScan = true; });
-  await page.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await page.getByRole("button", { name: "重新检查", exact: true }).click();
   await start.click();
   await page.getByRole("timer").getByText(/本次等待/).waitFor();
   await page.waitForFunction(() => /本次等待 [1-9]/.test(document.querySelector('[role="timer"]')?.textContent ?? ""));

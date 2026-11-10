@@ -7,14 +7,121 @@ use std::{
 use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
+async fn analyze_developer_tools(
+    ids: Vec<String>,
+    selected_id: Option<String>,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::DeveloperReport, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.developer_tools(ids, selected_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn preview_homebrew_cleanup(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::DeveloperPreview, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.preview_homebrew_cleanup())
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn choose_analysis_directory(engine: State<'_, Arc<Engine>>) -> Result<Option<Item>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+        use objc2_foundation::NSString;
+        let panel =
+            NSOpenPanel::openPanel(MainThreadMarker::new().ok_or("文件夹选择器需要主线程")?);
+        panel.setCanChooseDirectories(true);
+        panel.setCanChooseFiles(false);
+        panel.setAllowsMultipleSelection(false);
+        panel.setPrompt(Some(&NSString::from_str("选择目录")));
+        if panel.runModal() != NSModalResponseOK {
+            return Ok(None);
+        }
+        let urls = panel.URLs();
+        let url = urls.firstObject().ok_or("未取得所选目录")?;
+        let path = url.path().ok_or("所选目录路径不可用")?.to_string();
+        engine.select_directory(PathBuf::from(path)).map(Some)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = engine;
+        Err("当前仅支持macOS系统文件夹选择器".into())
+    }
+}
+#[tauri::command]
+async fn app_usage(
+    path: String,
+    bundle_id: String,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::AppUsage, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.app_usage(path, bundle_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn app_icon(
+    path: String,
+    bundle_id: String,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Option<String>, String> {
+    engine.app_icon(path, bundle_id)
+}
+#[tauri::command]
+fn app_uninstall_history(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Vec<core::UninstallRecord>, String> {
+    engine.uninstall_history()
+}
+#[tauri::command]
+async fn prepare_app_uninstall(
+    path: String,
+    bundle_id: String,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::UninstallPreview, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.prepare_uninstall(path, bundle_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn execute_app_uninstall(
+    token: u64,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<core::UninstallResult, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.execute_uninstall(token))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn installed_apps(engine: State<'_, Arc<Engine>>) -> Result<core::AppCatalog, String> {
+    let engine = engine.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || engine.installed_apps())
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn inspect_app_residue(
-    preset: String,
+    preset: Option<String>,
+    bundle_id: Option<String>,
+    app_path: Option<String>,
     engine: State<'_, Arc<Engine>>,
 ) -> Result<core::ResidueReport, String> {
     let engine = engine.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || engine.inspect_residue(preset))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || match (preset, bundle_id, app_path) {
+        (None, Some(id), None) => engine.inspect_bundle_residue(id),
+        (Some(preset), None, None) => engine.inspect_residue(preset),
+        (None, Some(id), Some(path)) => engine.inspect_installed_app(path, id),
+        _ => Err("请选择一种应用身份来源".into()),
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 fn reveal_residue_candidate(
@@ -236,10 +343,19 @@ pub fn run() {
             open_privacy_settings,
             reveal_current_app,
             disk_info,
+            installed_apps,
+            app_usage,
+            app_icon,
+            prepare_app_uninstall,
+            app_uninstall_history,
+            execute_app_uninstall,
             inspect_app_residue,
             reveal_residue_candidate,
             scan_disk,
             scan_roots,
+            analyze_developer_tools,
+            preview_homebrew_cleanup,
+            choose_analysis_directory,
             cancel_scan,
             list_children,
             reveal_observed_file,

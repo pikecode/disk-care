@@ -38,7 +38,7 @@ async (page) => {
         if (cmd === "cleanup_history") return [];
         if (cmd === "scan_disk")
           return {
-            id: 100,
+            id: Date.now(),
             disk,
             items: [
               item,
@@ -122,7 +122,7 @@ async (page) => {
     };
   });
   await page.reload();
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.locator(".page-heading").getByRole("button", { name: /检查/ }).click();
   await page
     .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
     .check();
@@ -138,6 +138,7 @@ async (page) => {
   });
   await selection.waitFor();
   if (await selection.isChecked()) throw new Error("扫描结果不应自动选择");
+  await page.getByRole("button",{name:/^查看全部 /}).click();
   if (
     await page
       .getByRole("checkbox", { name: "选择下载文件", exact: true })
@@ -201,8 +202,8 @@ async (page) => {
     throw new Error("清理后必须使扫描结果失效并收起操作栏");
   await page.getByRole("button", { name: "清理记录 1", exact: true }).click();
   await page.getByText("完成 · npm 下载缓存", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "空间概览", exact: true }).click();
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.getByRole("button", { name: "清理", exact: true }).click();
+  await page.locator(".page-heading").getByRole("button", { name: /检查/ }).click();
   await page
     .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
     .check();

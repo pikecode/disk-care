@@ -89,7 +89,7 @@ async (page) => {
   });
   await page.setViewportSize({ width: 1180, height: 900 });
   await page.goto("http://127.0.0.1:1420");
-  await page.getByRole("button", { name: "开始扫描", exact: true }).click();
+  await page.getByRole("button", { name: "开始检查", exact: true }).click();
   await page
     .getByRole("radio", { name: "扩展扫描：主要目录与应用数据" })
     .check();
@@ -103,6 +103,7 @@ async (page) => {
     name: "可清理空间分析",
     exact: true,
   });
+  await page.getByText("更多筛选",{exact:true}).click();
   const states = page.getByRole("group", {
     name: "按处理状态筛选",
     exact: true,
@@ -118,7 +119,7 @@ async (page) => {
     .getByRole("button", { name: "个人文件", exact: true })
     .click();
   await panel
-    .getByRole("button", { name: "查看可预览缓存", exact: true })
+    .getByRole("button", { name: "可以清理", exact: true })
     .click();
   if (
     (await categories
@@ -144,8 +145,8 @@ async (page) => {
   await page.getByText("已选择 2 项", { exact: true }).waitFor();
   await all.uncheck();
   await page.getByText("已选择 1 项", { exact: true }).waitFor();
-  await panel
-    .getByRole("button", { name: "查看仅供分析项目", exact: true })
+  await states
+    .getByRole("button", { name: /^仅供分析/ })
     .click();
   if ((await page.locator(".item-row").count()) !== 3)
     throw new Error("只读分类必须正确列出三项");
@@ -172,8 +173,8 @@ async (page) => {
   if (prepare.length !== 1 || prepare[0].args.ids.join(",") !== "uv")
     throw new Error("预览必须包含原先明确选择的隐藏项，且不能添加只读项");
   await page.getByRole("button", { name: "取消", exact: true }).click();
-  await panel
-    .getByRole("button", { name: "查看暂不可处理项目", exact: true })
+  await states
+    .getByRole("button", { name: /^暂不可处理/ })
     .click();
   if ((await page.locator(".item-row").count()) !== 1)
     throw new Error("受阻分类应只有 pip");
@@ -183,8 +184,8 @@ async (page) => {
   await page.getByText("先核对阻止原因", { exact: true }).waitFor();
   await states.getByRole("button", { name: /^零观测/ }).click();
   await page.getByText("当前筛选没有匹配项目。", { exact: true }).waitFor();
-  await panel
-    .getByRole("button", { name: "查看仅供分析项目", exact: true })
+  await states
+    .getByRole("button", { name: /^仅供分析/ })
     .click();
   await page
     .getByRole("button", { name: "查看Ollama 模型详情", exact: true })
@@ -198,7 +199,7 @@ async (page) => {
   await page
     .locator(".inventory")
     .screenshot({ path: "output/playwright/analysis-actions-070.png" });
-  await page.getByRole("region", { name: "空间清单", exact: true }).getByRole("button", { name: "查看项目账本", exact: true }).click();
+  await page.getByRole("region", { name: "空间清单", exact: true }).getByRole("button", { name: "查看项目空间", exact: true }).click();
   await page
     .getByRole("heading", { name: "项目空间", exact: true })
     .waitFor();

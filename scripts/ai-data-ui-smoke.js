@@ -42,8 +42,10 @@ async (page) => {
   });
   await page.setViewportSize({ width: 960, height: 760 });
   await page.goto('http://127.0.0.1:1420');
-  await page.getByRole('button', { name: 'AI 工作数据', exact: true }).click();
-  await page.getByText('范围上限：每工具 30 秒／10 万条目／12 层，总计 60 秒；达到预算时显示已观测部分。', { exact: true }).waitFor();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
+  await page.getByRole('button', { name: 'AI 数据', exact: true }).click();
+  await page.getByText('自定义路径与检查说明',{exact:true}).click();
+  await page.getByText('每工具最多30秒／10万条目／12层，总计60秒；达到上限时标记部分结果。',{exact:true}).waitFor();
   if (await page.evaluate(() => window.calls.some(c => c.cmd === 'analyze_ai_data'))) throw new Error('进入页面自动分析');
   await page.getByLabel('Claude Code', { exact: true }).uncheck();
   await page.getByLabel('Codex 数据目录').fill('~/custom-codex');
@@ -51,8 +53,9 @@ async (page) => {
   await start.click();
   const result = page.getByRole('article', { name: 'codex 分析结果' });
   await result.getByText('范围内统计完成', { exact: true }).waitFor();
+  await result.getByText('统计依据与占用对比',{exact:true}).click();
   await result.getByRole('button', { name: '设为会话基线' }).click();
-  await page.getByRole('button', { name: '空间概览', exact: true }).click();
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'空间',exact:true}).click();
   await page.getByRole('region', { name: '独立空间账本' }).waitFor();
   await page.getByRole('button', { name: '查看 AI 账本与基线' }).click();
   await result.getByRole('button', { name: '替换会话基线' }).waitFor();
@@ -66,7 +69,7 @@ async (page) => {
   if (await result.locator('.ai-item').count() !== 55) throw new Error('加载更多错误');
   await result.getByLabel('数据策略').selectOption('protected');
   if (await result.locator('.ai-item').count() !== 1) throw new Error('保护筛选错误');
-  await result.locator('.ai-item summary').focus();
+  await result.locator('.ai-item').first().focus();
   await page.keyboard.press('Enter');
   await result.getByText('只读分析，本项未开放清理。', { exact: true }).waitFor();
   if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('960px 溢出');
@@ -75,6 +78,7 @@ async (page) => {
     await page.evaluate(value => { window.aiMode = value; }, mode);
     await start.click();
     await result.getByText(label, { exact: true }).waitFor();
+    await result.getByText('统计依据与占用对比',{exact:true}).click();
     if (await result.getByRole('button', { name: '替换会话基线' }).isEnabled()) throw new Error('部分报告可设置基线');
     if (await result.getByText('未取得统计', { exact: true }).count() !== 2) throw new Error('未知占用显示为零');
     const calls = await page.evaluate(() => window.calls.length);
@@ -100,5 +104,5 @@ async (page) => {
   await page.getByText('合成路径错误', { exact: true }).waitFor();
   if (await page.evaluate(() => window.calls.some(c => /prepare_cleanup|execute_cleanup/.test(c.cmd)))) throw new Error('只读流程触发清理');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('通过：显式范围、自定义路径、保护筛选、分页、键盘展开、960px、缺失／拒绝／超限／失败／取消／错误、零清理调用。全部模拟 IPC。');
+  console.log('通过：显式范围、自定义路径、保护筛选、分页、键盘选择、960px、缺失／拒绝／超限／失败／取消／错误、零清理调用。全部模拟 IPC。');
 }
