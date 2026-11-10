@@ -119,6 +119,18 @@ fn process_start(pid: i32) -> Result<String, String> {
 #[cfg(target_os = "macos")]
 fn lsof_process_record(pid: i32, executable: PathBuf, target: &Path) -> Option<AppExitProcess> {
     let executable = fs::canonicalize(executable).ok()?;
+    // 文本映射也可能是动态库，必须与内核报告的主可执行文件一致。
+    let mut buffer = [0u8; 4096];
+    let length =
+        unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if length <= 0 {
+        return None;
+    }
+    let end = buffer.iter().position(|byte| *byte == 0)?;
+    let actual = fs::canonicalize(std::str::from_utf8(&buffer[..end]).ok()?).ok()?;
+    if actual != executable {
+        return None;
+    }
     if !belongs_to_target(&executable, target, pid) {
         return None;
     }
@@ -302,6 +314,14 @@ fn request_exit(_: &[AppExitProcess], _: &Path, _: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mapped_file_cannot_impersonate_the_main_executable() {
+        let f = crate::core::tests::Fixture::new();
+        let mapped = f.0.join("mapped-library");
+        fs::write(&mapped, "测试映射文件").unwrap();
+        assert!(lsof_process_record(std::process::id() as i32, mapped, &f.0).is_none());
+    }
     #[test]
     fn exit_targets_use_path_components_and_exclude_self() {
         let root = Path::new("/Applications/Example.app");
