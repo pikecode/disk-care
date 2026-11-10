@@ -23,6 +23,11 @@ export default function ScanAccess({
   const [locating, setLocating] = useState(false);
   const [error, setError] = useState("");
   const needsConfirmation = extended || root !== null;
+  function cancel() {
+    // 先关闭模态框，让浏览器恢复触发按钮焦点，再卸载组件。
+    dialog.current?.close();
+    onCancel();
+  }
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
@@ -54,7 +59,7 @@ export default function ScanAccess({
     <dialog
       className="scan-settings"
       ref={dialog}
-      onCancel={onCancel}
+      onCancel={event => { event.preventDefault(); cancel(); }}
       aria-labelledby="scan-access-title"
       aria-describedby="scan-access-description"
     >
@@ -70,7 +75,7 @@ export default function ScanAccess({
         <button
           className="icon-button"
           aria-label="关闭扫描设置"
-          onClick={onCancel}
+          onClick={cancel}
         >
           <X size={20} />
         </button>
@@ -258,7 +263,7 @@ export default function ScanAccess({
           只读分析 · 不自动清理
         </span>
         <div>
-          <button className="button secondary" onClick={onCancel}>
+          <button className="button secondary" onClick={cancel}>
             取消
           </button>
           <button

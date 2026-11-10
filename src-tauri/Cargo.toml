@@ -1,6 +1,6 @@
 [package]
 name = "disk-care"
-version = "0.9.32"
+version = "0.9.33"
 description = "本地磁盘分析与可审核的缓存清理工具"
 edition = "2021"
 
