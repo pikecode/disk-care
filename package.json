@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "check": "node scripts/check.mjs",
-    "verify:mac": "python3 scripts/verify-macos-bundle.py release/留白.app"
+    "verify:mac": "python3 scripts/verify-macos-bundle.py release/留白.app",
+    "check:ui": "node scripts/check-ui.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,7 +24,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
+    "playwright": "1.65.0",
     "typescript": "~5.8.3",
-    "vite": "^6"
+    "vite": "^6.4.6"
   }
 }

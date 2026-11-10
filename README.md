@@ -35,7 +35,7 @@ uv 扫描、预览和执行前比较目录元数据摘要，发现变化或复�
 
 ## 开发与验证
 
-需要 Node.js、npm、Rust stable，以及 Xcode 开发工具。本机已安装 Rust 最小工具链和 rustfmt、Clippy，未修改 shell 配置。
+需要 Node.js 22或以上、npm、Rust stable，以及 Xcode 开发工具。本机已安装 Rust 最小工具链和 rustfmt、Clippy，未修改 shell 配置。
 
 ```sh
 cd /Users/peakom/work/disk-care
@@ -48,13 +48,17 @@ npm run tauri dev
 npm run build
 npm test
 npm run check
+npx playwright install chromium
+npm run check:ui
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 npm run tauri build
 ```
 
-`npm run check` 统一运行前端构建、四组前端逻辑断言、Rust 测试、格式及 Clippy 检查；需先加载 Rust 工具链。它不包含浏览器模拟、真实目录访问或应用包权限验收。
+`npm run check` 统一运行前端构建、七组前端逻辑断言、Rust 测试、格式及 Clippy 检查；需先加载 Rust 工具链。它不包含浏览器模拟、真实目录访问或应用包权限验收。
 
-macOS 自动检查配置位于 `.github/workflows/macos-check.yml`：拉取请求、main 推送或手动触发时，安装锁定 npm 依赖并执行统一检查、原生构建及完整签名核验。首次云端运行尚待提交后验证，不代表本机权限验收。扫描详情提供有界的路径／原因／原始错误，只保留于当前扫描结果；三条执行规则的依据见 [规则证据](docs/cleanup-rule-evidence.md)。
+`npm run check:ui`构建生产资源并运行七组核心模拟：导航、范围、结果、历史、扫描活动、应用和卸载。首次先执行`npx playwright install chromium`，确保1420端口空闲；运行器不连接用户浏览器、不扫描或清理真实目标，只使用模拟IPC。每组独立上下文，失败截图／trace与运行JSON保存在`output/ui-check/`，普通模拟截图在`output/playwright/`。任何失败退出非零，中断另标记，不能将零用例当通过。
+
+macOS 自动检查配置位于 `.github/workflows/macos-check.yml`：PR、main推送或手动触发时，安装锁定依赖，执行统一检查、浏览器安装、七组核心模拟、原生构建及完整签名核验。只上传模拟证据目录、保留7天，不上传本地原生／真实扫描资料。旧基线已有云端成功记录，本轮新增交互步骤尚未推送运行，不能记作云端已通过，也不代表本机系统权限验收。扫描详情的路径／错误只在结果中使用，活动日志保持脱敏。
 
 显式运行 AI 默认目录元数据验收（仅统计 `~/.codex` 和 `~/.claude`，不读取正文、不清理）：
 

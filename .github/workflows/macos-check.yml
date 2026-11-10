@@ -29,6 +29,20 @@ jobs:
         run: npm ci
       - name: 统一检查
         run: npm run check
+      - name: 安装交互检查浏览器
+        run: npx playwright install chromium
+      - name: 核心交互模拟
+        run: npm run check:ui
+      - name: 保存交互验证证据
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: core-ui-check-${{ github.sha }}
+          path: |
+            output/ui-check/
+            output/playwright/
+          retention-days: 7
+          if-no-files-found: ignore
       - name: 构建原生应用
         run: npm run tauri build
       - name: 核验完整签名
