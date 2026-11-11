@@ -19,6 +19,7 @@ async (page) => {
   for (const viewport of [{width:1180,height:820},{width:960,height:660}]) {
     await page.setViewportSize(viewport);await page.goto('http://127.0.0.1:1420');
     const nav=page.getByRole('navigation',{name:'主导航'});
+    await nav.getByRole('button',{name:'应用',exact:true}).waitFor();
     if((await nav.getByRole('button').allTextContents()).join()!=='清理,空间,应用')throw new Error('主导航不是三个任务入口');
     await page.getByRole('heading',{name:'清理',exact:true}).waitFor();
     const start=page.getByRole('button',{name:'开始检查',exact:true});
