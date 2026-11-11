@@ -3966,7 +3966,12 @@ dialog::backdrop {
 .space-categories button[aria-current="page"] { color:#284f43; font-weight:600; background:#e5ebe0; }
 .space-categories button:hover { background:#edf0e9; }
 .cleanup-capacity { grid-template-columns:minmax(0,1fr); }
-.cleanup-capacity .disk-card { padding:28px; }
+.cleanup-capacity .disk-card { padding:16px 20px; border-radius:0; box-shadow:none; border:0; border-bottom:1px solid var(--line); }
+.cleanup-ready { min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:var(--muted); }
+.cleanup-ready h2 { margin:0; font-size:17px; font-weight:600; color:#263b30; }
+.cleanup-ready p { margin:0; font-size:13px; }
+.cleanup-ready > span { font-size:12px; }
+.cleanup-ready .cleanup-space-link { margin:8px 0 0; }
 .cleanup-space-link { margin:4px 0 22px; }
 .space-home { display:grid; grid-template-columns:minmax(220px,.8fr) minmax(300px,1.2fr); gap:0; min-height:440px; background:var(--paper); border-block:1px solid var(--line); }
 .space-folder { grid-column:2; grid-row:1; display:flex; flex-wrap:wrap; align-content:start; align-items:center; gap:16px; padding:24px; background:var(--paper); }

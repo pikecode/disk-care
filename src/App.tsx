@@ -838,7 +838,13 @@ export default function App() {
                   }}
                 />
               )}
-              {!scan && <button className="text-button cleanup-space-link" onClick={() => setView("space")}>查看空间占用 <ArrowRight size={15} /></button>}
+              {!scan && status !== "scan" && <section className="cleanup-ready" aria-label="清理检查准备">
+                <ScanLine size={30} strokeWidth={1.3} aria-hidden="true" />
+                <h2>准备检查可清理项目</h2>
+                <p>点击工具栏“开始检查”，选择本次检查范围。</p>
+                <span>查看结果后选择项目，预览并确认清理。</span>
+                <button className="text-button cleanup-space-link" onClick={() => setView("space")}>查看空间占用 <ArrowRight size={15} /></button>
+              </section>}
               {(scan || result || status === "scan") && <section
                 className="inventory"
                 ref={inventoryRef}
