@@ -105,21 +105,48 @@ async fn prepare_app_uninstall(
     path: String,
     bundle_id: String,
     engine: State<'_, Arc<Engine>>,
-) -> Result<core::UninstallPreview, String> {
+) -> Result<core::UninstallPreview, UninstallFailure> {
     let engine = engine.inner().clone();
     tauri::async_runtime::spawn_blocking(move || engine.prepare_uninstall(path, bundle_id))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| UninstallFailure::from(e.to_string()))?
+        .map_err(UninstallFailure::from)
 }
 #[tauri::command]
 async fn execute_app_uninstall(
     token: u64,
     engine: State<'_, Arc<Engine>>,
-) -> Result<core::UninstallResult, String> {
+) -> Result<core::UninstallResult, UninstallFailure> {
     let engine = engine.inner().clone();
     tauri::async_runtime::spawn_blocking(move || engine.execute_uninstall(token))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| UninstallFailure::from(e.to_string()))?
+        .map_err(UninstallFailure::from)
+}
+
+#[derive(serde::Serialize)]
+struct UninstallFailure {
+    code: &'static str,
+    message: String,
+}
+impl From<String> for UninstallFailure {
+    fn from(message: String) -> Self {
+        // 兼容现有核心错误，未知内容始终保留原文且不推断可退出。
+        let code = match message.as_str() {
+            "此应用标识有正在运行的副本，请正常退出后重试"
+            | "应用或包内辅助进程正在运行，或应用文件仍被占用，请正常退出关联程序后重试" => {
+                "occupied"
+            }
+            "卸载预览已失效，请重新预览并确认" | "请重新预览卸载" => {
+                "expired"
+            }
+            "应用标识已变化，请重新读取应用列表"
+            | "应用或目录身份已变化，请重新预览卸载"
+            | "应用已变化，请重新预览" => "changed",
+            _ => "unknown",
+        };
+        Self { code, message }
+    }
 }
 #[tauri::command]
 async fn installed_apps(engine: State<'_, Arc<Engine>>) -> Result<core::AppCatalog, String> {

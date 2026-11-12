@@ -23,7 +23,7 @@ async (page) => {
         window.uninstallMode='ok';return {remaining:null};
       }
       if (cmd === 'prepare_app_uninstall') {
-        if(window.uninstallMode === 'running') throw '应用正在运行，请正常退出';
+        if(window.uninstallMode === 'running') throw {code:'occupied',message:'应用正在运行，请正常退出'};
         return {token:42,name:'测试应用',path:args.path,bundleId:args.bundleId,expiresAt:window.uninstallMode === 'local-expired' ? Date.now()-1 : Date.now()+(window.uninstallMode === 'soon-expired' ? 1500 : 60000),before:window.beforeObservation ?? null};
       }
       if (cmd === 'execute_app_uninstall') {

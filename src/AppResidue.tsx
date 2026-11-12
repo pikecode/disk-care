@@ -10,6 +10,12 @@ import { compareAssociation, matchesAppReport, applicationGroups, visibleApplica
 import AppIcon from "./AppIcon";
 import CoverageDiagnostics from "./CoverageDiagnostics";
 const labels: Record<string, string> = { complete: "范围内检查完成", absent: "目录不存在", denied: "访问被拒绝", failed: "读取失败", skipped: "有内容跳过", limited: "达到上限", cancelled: "已停止", pending: "尚未访问" };
+function uninstallFailure(error: unknown) {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return { message: error.message, code: "code" in error && typeof error.code === "string" ? error.code : "unknown" };
+  }
+  return { message: String(error), code: "unknown" };
+}
 export default function AppResidue({ onPrepareExit, onExit, onUsage, active, desktop, busy, scanning, report: savedReport, onInspect, onCancel, onPrepareUninstall, onExecuteUninstall }: {
   onPrepareExit: (path: string, bundleId: string) => Promise<AppExitPreview>;
   onExit: (token: number, force: boolean) => Promise<AppExitResult>;
@@ -43,7 +49,7 @@ export default function AppResidue({ onPrepareExit, onExit, onUsage, active, des
   }, [uninstallPlan]);
   const remaining = uninstallPlan ? Math.max(0, Math.ceil((uninstallPlan.expiresAt - previewTime) / 1000)) : 0;
   const previewExpired = !Number.isFinite(remaining) || remaining <= 0;
-  const [uninstallError, setUninstallError] = useState<{ message: string; stage: "preview" | "execute"; path: string; bundleId: string } | null>(null);
+  const [uninstallError, setUninstallError] = useState<{ message: string; code: string; stage: "preview" | "execute"; path: string; bundleId: string } | null>(null);
   const [exitTarget, setExitTarget] = useState<{path: string; bundleId: string} | null>(null);
   const [uninstallAck, setUninstallAck] = useState(false);
   const [uninstallWorking, setUninstallWorking] = useState(false);
@@ -118,7 +124,7 @@ export default function AppResidue({ onPrepareExit, onExit, onUsage, active, des
   async function previewUninstall(path = appPath, id = bundleId) {
     setUninstallPlan(null); setError(""); setUninstallError(null); setUninstallAck(false); setUninstallWorking(true);
     try { setUninstallPlan(await onPrepareUninstall(path, id)); }
-    catch (e) { setUninstallError({ message: String(e), stage: "preview", path, bundleId: id }); }
+    catch (e) { setUninstallError({ ...uninstallFailure(e), stage: "preview", path, bundleId: id }); }
     finally { setUninstallWorking(false); }
   }
   async function confirmUninstall() {
@@ -131,7 +137,7 @@ export default function AppResidue({ onPrepareExit, onExit, onUsage, active, des
       setComparisonRecord({ at: outcome.at ?? Date.now(), name: outcome.name, path: outcome.path, bundleId: outcome.bundleId, success: true, message: "应用包已移到废纸篓", before: outcome.before });
       setCatalog(current => current ? { ...current, apps: current.apps.filter(app => app.path !== outcome.path) } : null);
       setAppPath(""); setBundleId(outcome.bundleId); setSpecial(false); setAck(false);
-    } catch (e) { setUninstallError({ message: String(e), stage: "execute", path: uninstallPlan.path, bundleId: uninstallPlan.bundleId }); }
+    } catch (e) { setUninstallError({ ...uninstallFailure(e), stage: "execute", path: uninstallPlan.path, bundleId: uninstallPlan.bundleId }); }
     finally { readHistory(); setUninstallWorking(false); setUninstallPlan(null); setUninstallAck(false); }
   }
   const comparison = report && comparisonRecord ? compareAssociation(comparisonRecord, report) : null;
@@ -210,7 +216,8 @@ export default function AppResidue({ onPrepareExit, onExit, onUsage, active, des
       <p>{uninstallError.message}</p><code className="ai-path">{uninstallError.path}</code>
       <p>根据上方原因正常退出相关程序，或核对目标位置的访问权限后重试。重试会重新检查并要求确认，不会直接执行卸载。</p>
       <button className="button secondary" disabled={!desktop || busy || loadingApps || uninstallWorking} onClick={() => void previewUninstall(uninstallError.path, uninstallError.bundleId)}>重新检查并预览</button>
-      <button className="text-button" disabled={!desktop || busy || loadingApps || uninstallWorking} onClick={() => setExitTarget({path: uninstallError.path, bundleId: uninstallError.bundleId})}>退出应用后继续…</button>
+      {uninstallError.code === "occupied" && <button className="text-button" disabled={!desktop || busy || loadingApps || uninstallWorking} onClick={() => setExitTarget({path: uninstallError.path, bundleId: uninstallError.bundleId})}>退出应用后继续…</button>}
+      {uninstallError.code === "changed" && <button className="text-button" disabled={!desktop || busy || loadingApps || uninstallWorking} onClick={readApps}>刷新应用列表</button>}
     </section>}
     {error && <p role="alert">{error}</p>}
     {report && <div className="residue-results">{comparisonRecord && <section className="residue-comparison" aria-label="卸载前后观测"><h3>卸载前后观测</h3><p>记录针对所选应用副本；仍存在的关联项不等于可删除残留，本次未发现也不证明由卸载造成。</p>{comparison ? comparison.map(item => <div key={item.path}><strong>{item.name} · {item.status}</strong><p>卸载前：{item.beforeBytes === null ? "无完整占用" : bytes(item.beforeBytes)}；本次：{item.afterBytes === null ? "无完整占用" : bytes(item.afterBytes)}</p></div>) : <p>{!comparisonRecord.success ? "此操作未完成卸载，不生成卸载后对照。" : comparisonRecord.before ? "目标、规则版本或观测时间不满足对照条件，请主动重新检查；不推断释放空间。" : "没有卸载前观测，无法生成前后对照。"}</p>}</section>}<div className="residue-section-heading"><h3>检查结果</h3><span>最近一次检查</span></div><div className="residue-result-summary" aria-live="polite"><div><strong>{candidates}</strong><span>候选条目 · 未跨来源去重</span></div><div><strong>{complete ? "范围内完成" : "检查不完整"}</strong><span>{report.sources.length ? `${report.sources.length} 个来源` : "没有可用来源"}</span></div></div><p>以下为各来源已观测占用，不跨来源相加，也不代表可释放空间。</p><details className="residue-technical"><summary>报告目标：{report.target}</summary><p>报告目标：{report.target} · 观测时间：{new Date(report.measuredAt).toLocaleString()}。身份依据：{report.identitySource ?? "用户标识或样例规则，安装状态未知"}。占用不等于可回收量，不跨来源相加；同次检查硬链接去重，APFS 共享仍可能重复。</p></details><div className="residue-source-filters" role="group" aria-label="关联结果筛选">{([["all",`全部 ${report.sources.length}`],["content",`发现内容 ${report.sources.filter(s => s.candidates.length > 0).length}`],["attention",`需关注 ${report.sources.filter(attentionSource).length}`]] as const).map(([value,label]) => <button key={value} aria-pressed={sourceFilter === value} onClick={() => setSourceFilter(value)}>{label}</button>)}</div>{!visibleSources(report, sourceFilter).length && <p>此筛选条件下没有来源，完整报告仍保留。</p>}{visibleSources(report, sourceFilter).map(source => <article className="ai-report" key={source.path}>
